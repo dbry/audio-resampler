@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////
 //                            **** ART ****                               //
 //                        Audio Resampling Tool                           //
-//                 Copyright (c) 2006-2022 David Bryant                   //
+//                 Copyright (c) 2006-2023 David Bryant                   //
 //                         All Rights Reserved                            //
 //      Distributed under the BSD Software License (see license.txt)      //
 ////////////////////////////////////////////////////////////////////////////
@@ -19,8 +19,8 @@
 #define IS_BIG_ENDIAN (*(uint16_t *)"\0\xff" < 0x0100)
 
 static const char *sign_on = "\n"
-" ART  Audio Resampling Tool  Version 0.1\n"
-" Copyright (c) 2006 - 2022 David Bryant.\n\n";
+" ART  Audio Resampling Tool  Version 0.2\n"
+" Copyright (c) 2006 - 2023 David Bryant.\n\n";
 
 static const char *usage =
 " Usage:     ART [-options] infile.wav outfile.wav\n\n"
@@ -28,7 +28,7 @@ static const char *usage =
 "           -r<Hz>      = resample to specified rate\n"
 "           -g<dB>      = apply gain (default = 0 dB)\n"
 "           -s<degrees> = add specified phase shift (+/-360 degrees)\n"
-"           -l<Hz>      = optional lower lowpass frequency\n"
+"           -l<Hz>      = specify alternate lowpass frequency\n"
 "           -f<num>     = number of sinc filters (2-1024)\n"
 "           -t<num>     = number of sinc taps (4-1024, multiples of 4)\n"
 "           -o<bits>    = change output file bitdepth (8|16|24|32)\n"
@@ -535,16 +535,31 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     float error [num_channels];
     Resample *resampler;
 
-    if (lowpass_freq) {
-        if (sample_ratio < 1.0)
-            lowpass_ratio = lowpass_freq / (resample_rate / 2.0);
-        else
-            lowpass_ratio = lowpass_freq / (sample_rate / 2.0);
+    // when downsampling, calculate the optimum lowpass based on resample filter
+    // length (i.e., more taps allow us to lowpass closer to Nyquist)
 
-        if (lowpass_ratio >= 1.0) {
+    if (sample_ratio < 1.0) {
+        lowpass_ratio -= (10.24 / num_taps);
+
+        if (lowpass_ratio < 0.84)           // limit the lowpass for very short filters
+            lowpass_ratio = 0.84;
+
+        if (lowpass_ratio < sample_ratio)   // avoid discontinuities near unity sample ratios
+            lowpass_ratio = sample_ratio;
+    }
+
+    if (lowpass_freq) {
+        double user_lowpass_ratio;
+
+        if (sample_ratio < 1.0)
+            user_lowpass_ratio = lowpass_freq / (resample_rate / 2.0);
+        else
+            user_lowpass_ratio = lowpass_freq / (sample_rate / 2.0);
+
+        if (user_lowpass_ratio >= 1.0)
             fprintf (stderr, "warning: ignoring invalid lowpass frequency specification (at or over Nyquist)\n");
-            lowpass_ratio = 1.0;
-        }
+        else
+            lowpass_ratio = user_lowpass_ratio;
     }
 
     if (bh4_window || !hann_window)
