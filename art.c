@@ -135,6 +135,12 @@ int main (argc, argv) int argc; char **argv;
 
 		    case 'O': case 'o':
 			outbits = strtod (++*argv, argv);
+
+                        if (outbits != 32 && (outbits < 4 || outbits > 24)) {
+                            fprintf (stderr, "\noutbits must be 4 - 24 (for integer) or 32 (for float)!\n");
+                            return 1;
+                        }
+
 			--*argv;
 			break;
 
@@ -323,10 +329,10 @@ static int wav_process (char *infilename, char *outfilename)
                 supported = 0;
             else if (format == WAVE_FORMAT_PCM) {
 
-                if (inbits != 8 && inbits != 16 && inbits != 24)
+                if (inbits < 4 || inbits > 24)
                     supported = 0;
 
-                if (WaveHeader.BlockAlign != WaveHeader.NumChannels * (inbits / 8))
+                if (WaveHeader.BlockAlign != WaveHeader.NumChannels * ((inbits + 7) / 8))
                     supported = 0;
             }
             else if (format == WAVE_FORMAT_IEEE_FLOAT) {
@@ -619,7 +625,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         if (outbuffer_samples > BUFFER_SAMPLES)
             max_samples = outbuffer_samples;
 
-        if (inbits == 24 || outbits == 24)
+        if (inbits > 16 || outbits > 16)
             max_bytes = 3;
 
         tmpbuffer = malloc (max_samples * num_channels * max_bytes);
@@ -628,7 +634,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             readbuffer = tmpbuffer;
     }
 
-    // this takes case of the filter delay and any user-specified phase shift
+    // this takes care of the filter delay and any user-specified phase shift
     resampleAdvancePosition (resampler, num_taps / 2.0 + phase_shift);
 
     uint32_t progress_divider = 0, percent;
@@ -648,7 +654,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         if (samples_to_read > BUFFER_SAMPLES)
             samples_to_read = BUFFER_SAMPLES;
 
-        samples_read = fread (readbuffer, num_channels * inbits / 8, samples_to_read, infile);
+        samples_read = fread (readbuffer, num_channels * ((inbits + 7) / 8), samples_to_read, infile);
         remaining_samples -= samples_read;
 
         if (!samples_read) {
@@ -660,19 +666,19 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             if (samples_to_append_now > BUFFER_SAMPLES)
                 samples_to_append_now = BUFFER_SAMPLES;
 
-            memset (readbuffer, (inbits == 8) * 128, samples_to_append_now * num_channels * inbits / 8);
+            memset (readbuffer, (inbits <= 8) * 128, samples_to_append_now * num_channels * ((inbits + 7) / 8));
             samples_read = samples_to_append_now;
             samples_to_append -= samples_to_append_now;
         }
 
-        if (inbits == 8) {
+        if (inbits <= 8) {
             float gain_factor = gain / 128.0;
             int i;
 
             for (i = 0; i < samples_read * num_channels; ++i)
                 inbuffer [i] = ((int) tmpbuffer [i] - 128) * gain_factor;
         }
-        else if (inbits == 16) {
+        else if (inbits <= 16) {
             float gain_factor = gain / 32768.0;
             int i, j;
 
@@ -682,7 +688,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
                 inbuffer [i] = value * gain_factor;
             }
         }
-        else if (inbits == 24) {
+        else if (inbits <= 24) {
             float gain_factor = gain / 8388608.0;
             int i, j;
 
@@ -731,11 +737,12 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
         // finally write the audio, converting to appropriate integer format if requested
 
-        if (outbits == 8 || outbits == 16 || outbits == 24) {
+        if (outbits != 32) {
             float scaler = (1 << outbits) / 2.0;
-            int32_t offset = (outbits == 8) ? 128 : 0;
+            int32_t offset = (outbits <= 8) * 128;
             int32_t highclip = (1 << (outbits - 1)) - 1;
             int32_t lowclip = ~highclip;
+            int leftshift = (24 - outbits) % 8;
             int i, j;
 
             for (i = j = 0; i < samples_generated * num_channels; ++i) {
@@ -752,7 +759,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
                 }
 
                 error [chan] += output - outbuffer [i];
-                tmpbuffer [j++] = output += offset;
+                tmpbuffer [j++] = output = (output << leftshift) + offset;
 
                 if (outbits > 8) {
                     tmpbuffer [j++] = output >> 8;
@@ -762,7 +769,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
                 }
             }
 
-            fwrite (tmpbuffer, num_channels * outbits / 8, samples_generated, outfile);
+            fwrite (tmpbuffer, num_channels * ((outbits + 7) / 8), samples_generated, outfile);
         }
         else {
             if (IS_BIG_ENDIAN) {
@@ -818,7 +825,7 @@ static int write_pcm_wav_header (FILE *outfile, int bps, int num_channels, unsig
     WaveHeader wavhdr;
 
     int wavhdrsize = 16;
-    int bytes_per_sample = bps / 8;
+    int bytes_per_sample = (bps + 7) / 8;
     int format = (bps == 32) ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM;
     uint32_t total_data_bytes = num_samples * bytes_per_sample * num_channels;
 
