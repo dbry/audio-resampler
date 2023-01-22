@@ -24,6 +24,20 @@ void biquad_lowpass (BiquadCoefficients *filter, double frequency)
     filter->b2 = (1.0 - K / Q + K * K) * norm;
 }
 
+// Second-order Highpass
+
+void biquad_highpass (BiquadCoefficients *filter, double frequency)
+{
+    double Q = sqrt (0.5), K = tan (M_PI * frequency);
+    double norm = 1.0 / (1.0 + K / Q + K * K);
+
+    filter->a0 = norm;
+    filter->a1 = -2.0 * norm;
+    filter->a2 = filter->a0;
+    filter->b1 = 2.0 * (K * K - 1.0) * norm;
+    filter->b2 = (1.0 - K / Q + K * K) * norm;
+}
+
 // Initialize the specified biquad filter with the given parameters. Note that the "gain" parameter is supplied here
 // to save a multiply every time the filter in applied.
 
