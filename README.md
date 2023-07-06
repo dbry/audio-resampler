@@ -35,6 +35,8 @@ Preset **-3** is the default and is a reasonable compromise for high-quality res
 and **-2** are more suited for realtime use on embedded systems and **-4** represents the highest quality
 available for this tool.
 
+[Infinite Wave](https://infinitewave.ca/) has a very useful site comparing the audio performance of various sample rate converters and now includes this resampler utilizing presets **-2**, **-3**, and **-4**. [Here's the comparison of **ART** preset **-2** and preset **-4**](https://src.infinitewave.ca/?Top=ART_Preset2&Bot=ART_Preset4&Spec=0100), and you can scroll through to many other converters to see that **ART** is competetive in quality with virtually anything out there.
+
 **ART** supports integer samples from 4-bits to 24-bits, as well as 32-bit floating-point samples. Any
 number of channels are supported. Normally the output bitdepth is set to the same as the input file, however
 this can be forced to one of the other supported bitdepths with the **-o** option.
