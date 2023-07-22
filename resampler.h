@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////
 //                         **** RESAMPLER ****                            //
 //                     Sinc-based Audio Resampling                        //
-//                Copyright (c) 2006 - 2022 David Bryant.                 //
+//                Copyright (c) 2006 - 2023 David Bryant.                 //
 //                          All Rights Reserved.                          //
 //      Distributed under the BSD Software License (see license.txt)      //
 ////////////////////////////////////////////////////////////////////////////

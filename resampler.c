@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////
 //                         **** RESAMPLER ****                            //
 //                     Sinc-based Audio Resampling                        //
-//                Copyright (c) 2006 - 2022 David Bryant.                 //
+//                Copyright (c) 2006 - 2023 David Bryant.                 //
 //                          All Rights Reserved.                          //
 //      Distributed under the BSD Software License (see license.txt)      //
 ////////////////////////////////////////////////////////////////////////////
@@ -10,159 +10,8 @@
 
 #include "resampler.h"
 
-#ifndef M_PI
-#define M_PI 3.14159265358979324
-#endif
-
-// This is the basic convolution operation that is the core of the resampler and utilizes the
-// bulk of the CPU load (assuming reasonably long filters). The first version is the canonical
-// form, followed by three variations that may or may not be faster depending on your compiler,
-// options, and system. Try 'em and use the fastest, or rewrite them using SIMD. Note that on
-// gcc and clang, -Ofast can make a huge difference.
-
-#if 1   // Version 1 (canonical)
-static double apply_filter (float *A, float *B, int num_taps)
-{
-    float sum = 0.0;
-
-    do sum += *A++ * *B++;
-    while (--num_taps);
-
-    return sum;
-}
-#endif
-
-#if 0   // Version 2 (2x unrolled loop)
-static double apply_filter (float *A, float *B, int num_taps)
-{
-    int num_loops = num_taps >> 1;
-    float sum = 0.0;
-
-    do {
-        sum += (A[0] * B[0]) + (A[1] * B[1]);
-        A += 2; B += 2;
-    } while (--num_loops);
-
-    return sum;
-}
-#endif
-
-#if 0   // Version 3 (4x unrolled loop)
-static double apply_filter (float *A, float *B, int num_taps)
-{
-    int num_loops = num_taps >> 2;
-    float sum = 0.0;
-
-    do {
-        sum += (A[0] * B[0]) + (A[1] * B[1]) + (A[2] * B[2]) + (A[3] * B[3]);
-        A += 4; B += 4;
-    } while (--num_loops);
-
-    return sum;
-}
-#endif
-
-#if 0   // Version 4 (outside-in order, may be more accurate)
-static double apply_filter (float *A, float *B, int num_taps)
-{
-    int i = num_taps - 1;
-    float sum = 0.0;
-
-    do {
-        sum += (A[0] * B[0]) + (A[i] * B[i]);
-        A++; B++;
-    } while ((i -= 2) > 0);
-
-    return sum;
-}
-#endif
-
-static void init_filter (Resample *cxt, float *filter, double fraction, double lowpass_ratio)
-{
-    const double a0 = 0.35875;
-    const double a1 = 0.48829;
-    const double a2 = 0.14128;
-    const double a3 = 0.01168;
-    double filter_sum = 0.0;
-    int i;
-
-    // "dist" is the absolute distance from the sinc maximum to the filter tap to be calculated, in radians
-    // "ratio" is that distance divided by half the tap count such that it reaches π at the window extremes
-
-    // Note that with this scaling, the odd terms of the Blackman-Harris calculation appear to be negated
-    // with respect to the reference formula version.
-
-    for (i = 0; i < cxt->numTaps; ++i) {
-        double dist = fabs ((cxt->numTaps / 2 - 1) + fraction - i) * M_PI;
-        double ratio = dist / (cxt->numTaps / 2);
-        double value;
-
-        if (dist != 0.0) {
-            value = sin (dist * lowpass_ratio) / (dist * lowpass_ratio);
-
-            if (cxt->flags & BLACKMAN_HARRIS)
-                value *= a0 + a1 * cos (ratio) + a2 * cos (2 * ratio) + a3 * cos (3 * ratio);
-            else
-                value *= 0.5 * (1.0 + cos (ratio));     // Hann window
-        }
-        else
-            value = 1.0;
-
-        filter_sum += cxt->tempFilter [i] = value;
-    }
-
-    // filter should have unity DC gain
-
-    double scaler = 1.0 / filter_sum, error = 0.0;
-
-    for (i = cxt->numTaps / 2; i < cxt->numTaps; i = cxt->numTaps - i - (i >= cxt->numTaps / 2)) {
-        filter [i] = (cxt->tempFilter [i] *= scaler) - error;
-        error += filter [i] - cxt->tempFilter [i];
-    }
-}
-
-static double subsample_no_interpolate (Resample *cxt, float *source, double offset)
-{
-    source += (int) floor (offset);
-    offset -= floor (offset);
-
-    if (offset == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
-        return *source;
-
-    return apply_filter (
-        cxt->filters [(int) floor (offset * cxt->numFilters + 0.5)],
-        source - cxt->numTaps / 2 + 1, cxt->numTaps);
-}
-
-static double subsample_interpolate (Resample *cxt, float *source, double offset)
-{
-    double sum1, sum2;
-    int i;
-
-    source += (int) floor (offset);
-    offset -= floor (offset);
-
-     if (offset == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
-        return *source;
-
-    i = (int) floor (offset *= cxt->numFilters);
-    sum1 = apply_filter (cxt->filters [i], source - cxt->numTaps / 2 + 1, cxt->numTaps);
-
-    if ((offset -= i) == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
-        return sum1;
-
-    sum2 = apply_filter (cxt->filters [i+1], source - cxt->numTaps / 2 + 1, cxt->numTaps);
-
-    return sum2 * offset + sum1 * (1.0 - offset);
-}
-
-double subsample (Resample *cxt, float *source, double offset)
-{
-    if (cxt->flags & SUBSAMPLE_INTERPOLATE)
-        return subsample_interpolate (cxt, source, offset);
-    else
-        return subsample_no_interpolate (cxt, source, offset);
-}
+static void init_filter (Resample *cxt, float *filter, double fraction, double lowpass_ratio);
+static double subsample (Resample *cxt, float *source, double offset);
 
 // Initialize a resampler context with the specified characteristics. The returned context pointer
 // is used for all subsequent calls to the resampler (and should not be dereferenced). A NULL
@@ -512,4 +361,158 @@ void resampleFree (Resample *cxt)
 
     free (cxt->buffers);
     free (cxt);
+}
+
+// This is the basic convolution operation that is the core of the resampler and utilizes the
+// bulk of the CPU load (assuming reasonably long filters). The first version is the canonical
+// form, followed by three variations that may or may not be faster depending on your compiler,
+// options, and system. Try 'em and use the fastest, or rewrite them using SIMD. Note that on
+// gcc and clang, -Ofast can make a huge difference.
+
+#if 1   // Version 1 (canonical)
+static double apply_filter (float *A, float *B, int num_taps)
+{
+    float sum = 0.0;
+
+    do sum += *A++ * *B++;
+    while (--num_taps);
+
+    return sum;
+}
+#endif
+
+#if 0   // Version 2 (2x unrolled loop)
+static double apply_filter (float *A, float *B, int num_taps)
+{
+    int num_loops = num_taps >> 1;
+    float sum = 0.0;
+
+    do {
+        sum += (A[0] * B[0]) + (A[1] * B[1]);
+        A += 2; B += 2;
+    } while (--num_loops);
+
+    return sum;
+}
+#endif
+
+#if 0   // Version 3 (4x unrolled loop)
+static double apply_filter (float *A, float *B, int num_taps)
+{
+    int num_loops = num_taps >> 2;
+    float sum = 0.0;
+
+    do {
+        sum += (A[0] * B[0]) + (A[1] * B[1]) + (A[2] * B[2]) + (A[3] * B[3]);
+        A += 4; B += 4;
+    } while (--num_loops);
+
+    return sum;
+}
+#endif
+
+#if 0   // Version 4 (outside-in order, may be more accurate)
+static double apply_filter (float *A, float *B, int num_taps)
+{
+    int i = num_taps - 1;
+    float sum = 0.0;
+
+    do {
+        sum += (A[0] * B[0]) + (A[i] * B[i]);
+        A++; B++;
+    } while ((i -= 2) > 0);
+
+    return sum;
+}
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979324
+#endif
+
+static void init_filter (Resample *cxt, float *filter, double fraction, double lowpass_ratio)
+{
+    const double a0 = 0.35875;
+    const double a1 = 0.48829;
+    const double a2 = 0.14128;
+    const double a3 = 0.01168;
+    double filter_sum = 0.0;
+    int i;
+
+    // "dist" is the absolute distance from the sinc maximum to the filter tap to be calculated, in radians
+    // "ratio" is that distance divided by half the tap count such that it reaches π at the window extremes
+
+    // Note that with this scaling, the odd terms of the Blackman-Harris calculation appear to be negated
+    // with respect to the reference formula version.
+
+    for (i = 0; i < cxt->numTaps; ++i) {
+        double dist = fabs ((cxt->numTaps / 2 - 1) + fraction - i) * M_PI;
+        double ratio = dist / (cxt->numTaps / 2);
+        double value;
+
+        if (dist != 0.0) {
+            value = sin (dist * lowpass_ratio) / (dist * lowpass_ratio);
+
+            if (cxt->flags & BLACKMAN_HARRIS)
+                value *= a0 + a1 * cos (ratio) + a2 * cos (2 * ratio) + a3 * cos (3 * ratio);
+            else
+                value *= 0.5 * (1.0 + cos (ratio));     // Hann window
+        }
+        else
+            value = 1.0;
+
+        filter_sum += cxt->tempFilter [i] = value;
+    }
+
+    // filter should have unity DC gain
+
+    double scaler = 1.0 / filter_sum, error = 0.0;
+
+    for (i = cxt->numTaps / 2; i < cxt->numTaps; i = cxt->numTaps - i - (i >= cxt->numTaps / 2)) {
+        filter [i] = (cxt->tempFilter [i] *= scaler) - error;
+        error += filter [i] - cxt->tempFilter [i];
+    }
+}
+
+static double subsample_no_interpolate (Resample *cxt, float *source, double offset)
+{
+    source += (int) floor (offset);
+    offset -= floor (offset);
+
+    if (offset == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
+        return *source;
+
+    return apply_filter (
+        cxt->filters [(int) floor (offset * cxt->numFilters + 0.5)],
+        source - cxt->numTaps / 2 + 1, cxt->numTaps);
+}
+
+static double subsample_interpolate (Resample *cxt, float *source, double offset)
+{
+    double sum1, sum2;
+    int i;
+
+    source += (int) floor (offset);
+    offset -= floor (offset);
+
+     if (offset == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
+        return *source;
+
+    i = (int) floor (offset *= cxt->numFilters);
+    sum1 = apply_filter (cxt->filters [i], source - cxt->numTaps / 2 + 1, cxt->numTaps);
+
+    if ((offset -= i) == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
+        return sum1;
+
+    sum2 = apply_filter (cxt->filters [i+1], source - cxt->numTaps / 2 + 1, cxt->numTaps);
+
+    return sum2 * offset + sum1 * (1.0 - offset);
+}
+
+static double subsample (Resample *cxt, float *source, double offset)
+{
+    if (cxt->flags & SUBSAMPLE_INTERPOLATE)
+        return subsample_interpolate (cxt, source, offset);
+    else
+        return subsample_no_interpolate (cxt, source, offset);
 }
