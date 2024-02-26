@@ -319,8 +319,14 @@ static int wav_process (char *infilename, char *outfilename)
             format = (WaveHeader.FormatTag == WAVE_FORMAT_EXTENSIBLE && chunk_header.ckSize == 40) ?
                 WaveHeader.SubFormat : WaveHeader.FormatTag;
 
-            channel_mask = (WaveHeader.FormatTag == WAVE_FORMAT_EXTENSIBLE && chunk_header.ckSize == 40) ?
-                WaveHeader.ChannelMask : 0;
+            if (WaveHeader.FormatTag == WAVE_FORMAT_EXTENSIBLE && chunk_header.ckSize == 40)
+                channel_mask = WaveHeader.ChannelMask;
+            else if (WaveHeader.NumChannels <= 2)
+                channel_mask = 0x5 - WaveHeader.NumChannels;
+            else if (WaveHeader.NumChannels < 32)
+                channel_mask = (1U << WaveHeader.NumChannels) - 1;
+            else
+                channel_mask = 0xffffffff;
 
             inbits = (chunk_header.ckSize == 40 && WaveHeader.Samples.ValidBitsPerSample) ?
                 WaveHeader.Samples.ValidBitsPerSample : WaveHeader.BitsPerSample;
@@ -464,6 +470,11 @@ static int wav_process (char *infilename, char *outfilename)
     }
 
     unsigned int output_samples = process_audio (infile, outfile, sample_rate, num_samples, num_channels, inbits);
+
+    // write an extra padding zero byte if the data chunk is not an even size
+
+    if ((output_samples * num_channels * ((outbits + 7) / 8)) & 1)
+        fwrite ("", 1, 1, outfile);
 
     rewind (outfile);
 
@@ -838,7 +849,9 @@ static int write_pcm_wav_header (FILE *outfile, int bps, int num_channels, unsig
     wavhdr.BlockAlign = bytes_per_sample * num_channels;
     wavhdr.BitsPerSample = bps;
 
-    if (channel_mask) {
+    // write an extended header if more than 2 channels or a non-standard channel-mask
+
+    if (num_channels > 2 || channel_mask != 0x5 - num_channels) {
         wavhdrsize = sizeof (wavhdr);
         wavhdr.cbSize = 22;
         wavhdr.Samples.ValidBitsPerSample = bps;
@@ -856,7 +869,7 @@ static int write_pcm_wav_header (FILE *outfile, int bps, int num_channels, unsig
 
     memcpy (riffhdr.ckID, "RIFF", sizeof (riffhdr.ckID));
     memcpy (riffhdr.formType, "WAVE", sizeof (riffhdr.formType));
-    riffhdr.ckSize = sizeof (riffhdr) + wavhdrsize + sizeof (datahdr) + total_data_bytes;
+    riffhdr.ckSize = (sizeof (riffhdr) + wavhdrsize + sizeof (datahdr) + total_data_bytes + 1) & ~1U;
     memcpy (fmthdr.ckID, "fmt ", sizeof (fmthdr.ckID));
     fmthdr.ckSize = wavhdrsize;
 
