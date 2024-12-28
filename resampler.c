@@ -365,11 +365,11 @@ void resampleFree (Resample *cxt)
 
 // This is the basic convolution operation that is the core of the resampler and utilizes the
 // bulk of the CPU load (assuming reasonably long filters). The first version is the canonical
-// form, followed by three variations that may or may not be faster depending on your compiler,
-// options, and system. Try 'em and use the fastest, or rewrite them using SIMD. Note that on
-// gcc and clang, -Ofast can make a huge difference.
+// form for reference, followed by two variations that are more accurate and incorporate various
+// degrees of parallelization that can be utilized by optimizing compilers. Try 'em and use the
+// fastest, or rewrite them using SIMD.
 
-#if 1   // Version 1 (canonical)
+#if 0   // Version 1 (canonical, very simple but slow and less accurate, not recommended)
 static double apply_filter (float *A, float *B, int num_taps)
 {
     float sum = 0.0;
@@ -381,37 +381,9 @@ static double apply_filter (float *A, float *B, int num_taps)
 }
 #endif
 
-#if 0   // Version 2 (2x unrolled loop)
-static double apply_filter (float *A, float *B, int num_taps)
-{
-    int num_loops = num_taps >> 1;
-    float sum = 0.0;
-
-    do {
-        sum += (A[0] * B[0]) + (A[1] * B[1]);
-        A += 2; B += 2;
-    } while (--num_loops);
-
-    return sum;
-}
-#endif
-
-#if 0   // Version 3 (4x unrolled loop)
-static double apply_filter (float *A, float *B, int num_taps)
-{
-    int num_loops = num_taps >> 2;
-    float sum = 0.0;
-
-    do {
-        sum += (A[0] * B[0]) + (A[1] * B[1]) + (A[2] * B[2]) + (A[3] * B[3]);
-        A += 4; B += 4;
-    } while (--num_loops);
-
-    return sum;
-}
-#endif
-
-#if 0   // Version 4 (outside-in order, may be more accurate)
+#if 1   // Version 2 (outside-in order, more accurate)
+        // Works well with gcc and mingw
+        // try "-O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math"
 static double apply_filter (float *A, float *B, int num_taps)
 {
     int i = num_taps - 1;
@@ -421,6 +393,22 @@ static double apply_filter (float *A, float *B, int num_taps)
         sum += (A[0] * B[0]) + (A[i] * B[i]);
         A++; B++;
     } while ((i -= 2) > 0);
+
+    return sum;
+}
+#endif
+
+#if 0   // Version 3 (outside-in order, 2x unrolled loop)
+        // Works well with MSVC, but gcc has trouble vectorizing it
+static double apply_filter(float* A, float* B, int num_taps)
+{
+    int i = num_taps - 1;
+    float sum = 0.0;
+
+    do {
+        sum += (A[0] * B[0]) + (A[i] * B[i]) + (A[1] * B[1]) + (A[i - 1] * B[i - 1]);
+        A += 2; B += 2;
+    } while ((i -= 4) > 0);
 
     return sum;
 }
