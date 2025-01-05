@@ -349,18 +349,20 @@ double resampleGetPosition (Resample *cxt)
 
 void resampleFree (Resample *cxt)
 {
-    int i;
+    if (cxt) {
+        int i;
 
-    for (i = 0; i <= cxt->numFilters; ++i)
-        free (cxt->filters [i]);
+        for (i = 0; i <= cxt->numFilters; ++i)
+            free (cxt->filters [i]);
 
-    free (cxt->filters);
+        free (cxt->filters);
 
-    for (i = 0; i < cxt->numChannels; ++i)
-        free (cxt->buffers [i]);
+        for (i = 0; i < cxt->numChannels; ++i)
+            free (cxt->buffers [i]);
 
-    free (cxt->buffers);
-    free (cxt);
+        free (cxt->buffers);
+        free (cxt);
+    }
 }
 
 // This is the basic convolution operation that is the core of the resampler and utilizes the

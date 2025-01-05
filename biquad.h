@@ -8,20 +8,23 @@
 
 // biquad.h
 
+#ifndef BIQUAD_H
+#define BIQUAD_H
+
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 #include <stdio.h>
 #include <math.h>
 
 typedef struct {
-    float a0, a1, a2, b1, b2;
+    float a0, a1, a2, a3, a4, b1, b2, b3, b4;
 } BiquadCoefficients;
 
 typedef struct {
-    BiquadCoefficients coeffs;  // coefficients
-    float in_d1, in_d2;	        // delayed input
-    float out_d1, out_d2;	// delayed output
-    int first_order;            // optimization
+    float a[5], b[5];	            // coefficients
+    float x[4], y[4];	            // delayed input/output
+    int order, index;
 } Biquad;
 
 #ifdef __cplusplus
@@ -39,3 +42,6 @@ float biquad_apply_sample (Biquad *f, float input);
 #ifdef __cplusplus
 }
 #endif
+
+#endif
+

@@ -14,13 +14,16 @@
 #include <math.h>
 
 #include "resampler.h"
+#include "decimator.h"
 #include "biquad.h"
+
+#define VERSION         0.3
 
 #define IS_BIG_ENDIAN (*(uint16_t *)"\0\xff" < 0x0100)
 
 static const char *sign_on = "\n"
-" ART  Audio Resampling Tool  Version 0.2\n"
-" Copyright (c) 2006 - 2023 David Bryant.\n\n";
+" ART  Audio Resampling Tool  Version %.1f\n"
+" Copyright (c) 2006 - 2025 David Bryant.\n\n";
 
 static const char *usage =
 " Usage:     ART [-options] infile.wav outfile.wav\n\n"
@@ -32,7 +35,17 @@ static const char *usage =
 "           -f<num>     = number of sinc filters (2-1024)\n"
 "           -t<num>     = number of sinc taps (4-1024, multiples of 4)\n"
 "           -o<bits>    = change output file bitdepth (4-24 or 32)\n"
-"           -n          = use nearest filter (don't interpolate)\n"
+"           -d<sel>     = override default dither (which is HP tpdf):\n"
+"                           sel = 0 for no dither\n"
+"                           sel = 1 for flat tpdf dither\n"
+"                           sel = 2 for LP tpdf dither\n"
+"           -n<sel>     = override default noise-shaping (which is ATH)\n"
+"                           sel = 0 for no noise-shaping\n"
+"                           sel = 1 for 1st-order shaping\n"
+"                           sel = 2 for 2nd-order shaping\n"
+"                           sel = 3 for 3rd-order shaping\n"
+"           -i<bytes>   = test non-interleaved decimator (debug only)\n"
+"           -0          = disable sinc resampler completely (debug only)\n"
 "           -b          = Blackman-Harris windowing (best stopband)\n"
 "           -h          = Hann windowing (fastest transition)\n"
 "           -p          = pre/post filtering (cascaded biquads)\n"
@@ -42,8 +55,9 @@ static const char *usage =
 " Web:       Visit www.github.com/dbry/audio-resampler for latest version and info\n\n";
 
 static int wav_process (char *infilename, char *outfilename);
-static int bh4_window, hann_window, num_taps = 256, num_filters = 256;
-static int verbosity, interpolate = 1, pre_post_filter, outbits;
+static int bh4_window, hann_window, num_taps = 256, num_filters = 256, outbits, verbosity, pre_post_filter;
+static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE;
+static int test_non_interleaved, non_interleaved_bytes;
 static unsigned long resample_rate, lowpass_freq;
 static double phase_shift, gain = 1.0;
 
@@ -63,6 +77,10 @@ int main (argc, argv) int argc; char **argv;
 #endif
             while (*++*argv)
                 switch (**argv) {
+
+		    case '0':                           // for debug only (forces resampler off)
+			num_filters = num_taps = 0;
+			break;
 
 		    case '1':
 			num_filters = num_taps = 16;
@@ -101,6 +119,55 @@ int main (argc, argv) int argc; char **argv;
 			--*argv;
 			break;
 
+		    case 'D': case 'd':
+                        {
+                            int dither_select = strtod (++*argv, argv);
+
+                            switch (dither_select) {
+                                case 0:
+                                    dither = 0;
+                                    break;
+                                case 1:
+                                    dither = DITHER_FLAT;
+                                    break;
+                                case 2:
+                                    dither = DITHER_LOWPASS;
+                                    break;
+                                default:
+                                    fprintf (stderr, "\ndither override must be 0, 1, or 2!\n");
+                                    return 1;
+                            }
+                        }
+
+			--*argv;
+			break;
+
+		    case 'N': case 'n':
+                        {
+			    int noise_shaping_select = strtod (++*argv, argv);
+
+                            switch (noise_shaping_select) {
+                                case 0:
+                                    noise_shaping = 0;
+                                    break;
+                                case 1:
+                                    noise_shaping = SHAPING_1ST_ORDER;
+                                    break;
+                                case 2:
+                                    noise_shaping = SHAPING_2ND_ORDER;
+                                    break;
+                                case 3:
+                                    noise_shaping = SHAPING_3RD_ORDER;
+                                    break;
+                                default:
+                                    fprintf (stderr, "\nnoise-shaping override must be 0, 1, 2, or 3!\n");
+                                    return 1;
+                            }
+                        }
+
+			--*argv;
+			break;
+
 		    case 'S': case 's':
 			phase_shift = strtod (++*argv, argv) / 360.0;
 
@@ -133,6 +200,12 @@ int main (argc, argv) int argc; char **argv;
 			--*argv;
 			break;
 
+		    case 'I': case 'i':
+			non_interleaved_bytes = strtod (++*argv, argv);
+                        test_non_interleaved = 1;
+			--*argv;
+			break;
+
 		    case 'O': case 'o':
 			outbits = strtod (++*argv, argv);
 
@@ -153,10 +226,6 @@ int main (argc, argv) int argc; char **argv;
                         }
 
 			--*argv;
-			break;
-
-		    case 'N': case 'n':
-			interpolate = 0;
 			break;
 
 		    case 'B': case 'b':
@@ -186,7 +255,7 @@ int main (argc, argv) int argc; char **argv;
     }
 
     if (verbosity >= 0)
-        fprintf (stderr, "%s", sign_on);
+        fprintf (stderr, sign_on, VERSION);
 
     if (!outfilename) {
         printf ("%s", usage);
@@ -490,48 +559,6 @@ static int wav_process (char *infilename, char *outfilename)
     return res;
 }
 
-// Return a tpdf random value in the range: -1.0 <= n < 1.0
-// type: -1: negative intersample correlation (HF boost)
-//        0: no correlation (independent samples, flat spectrum)
-//        1: positive intersample correlation (LF boost)
-// Note: not thread-safe on the same channel
-
-static uint32_t *tpdf_generators;
-
-static void tpdf_dither_init (int num_channels)
-{
-    int generator_bytes = num_channels * sizeof (uint32_t);
-    unsigned char *seed = malloc (generator_bytes);
-    uint32_t random = 0x31415926;
-
-    tpdf_generators = (uint32_t *) seed;
-
-    while (generator_bytes--) {
-        *seed++ = random >> 24;
-        random = ((random << 4) - random) ^ 1;
-        random = ((random << 4) - random) ^ 1;
-        random = ((random << 4) - random) ^ 1;
-    }
-}
-
-static inline double tpdf_dither (int channel, int type)
-{
-    uint32_t random = tpdf_generators [channel];
-    random = ((random << 4) - random) ^ 1;
-    random = ((random << 4) - random) ^ 1;
-    uint32_t first = type ? tpdf_generators [channel] ^ ((int32_t) type >> 31) : ~random;
-    random = ((random << 4) - random) ^ 1;
-    random = ((random << 4) - random) ^ 1;
-    random = ((random << 4) - random) ^ 1;
-    tpdf_generators [channel] = random;
-    return (((first >> 1) + (random >> 1)) / 2147483648.0) - 1.0;
-}
-
-static void tpdf_dither_free (void)
-{
-    free (tpdf_generators);
-}
-
 #define BUFFER_SAMPLES          4096
 
 static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sample_rate,
@@ -540,17 +567,16 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     double sample_ratio = (double) resample_rate / sample_rate, lowpass_ratio = 1.0;
     unsigned int outbuffer_samples = (int) floor (BUFFER_SAMPLES * sample_ratio * 1.1 + 100.0);
     unsigned long remaining_samples = num_samples, output_samples = 0, clipped_samples = 0;
-    float *outbuffer = malloc (outbuffer_samples * num_channels * sizeof (float));
+    float *const outbuffer = malloc (outbuffer_samples * num_channels * sizeof (float));
     float *inbuffer = malloc (BUFFER_SAMPLES * num_channels * sizeof (float));
-    int flags = interpolate ? SUBSAMPLE_INTERPOLATE : 0;
-    int samples_to_append = num_taps / 2;
-    int pre_filter = 0, post_filter = 0;
+    int samples_to_append = 0, pre_filter = 0, post_filter = 0;
+    int flags = SUBSAMPLE_INTERPOLATE;
     Biquad lowpass [num_channels] [2];
     BiquadCoefficients lowpass_coeff;
     unsigned char *tmpbuffer = NULL;
     void *readbuffer = inbuffer;
-    float error [num_channels];
-    Resample *resampler;
+    Decimate *decimator = NULL;
+    Resample *resampler = NULL;
 
     // when downsampling, calculate the optimum lowpass based on resample filter
     // length (i.e., more taps allow us to lowpass closer to Nyquist)
@@ -591,23 +617,27 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             fprintf (stderr, "cascaded biquad pre-filter at %g Hz\n", sample_rate * cutoff);
     }
 
-    if (sample_ratio < 1.0) {
-        resampler = resampleInit (num_channels, num_taps, num_filters, sample_ratio * lowpass_ratio, flags | INCLUDE_LOWPASS);
+    if (num_filters && (sample_ratio != 1.0 || lowpass_ratio != 1.0 || phase_shift != 0.0)) {
+        if (sample_ratio < 1.0) {
+            resampler = resampleInit (num_channels, num_taps, num_filters, sample_ratio * lowpass_ratio, flags | INCLUDE_LOWPASS);
 
-        if (verbosity > 0)
-            fprintf (stderr, "%d-tap sinc downsampler with lowpass at %g Hz\n", num_taps, sample_ratio * lowpass_ratio * sample_rate / 2.0);
-    }
-    else if (lowpass_ratio < 1.0) {
-        resampler = resampleInit (num_channels, num_taps, num_filters, lowpass_ratio, flags | INCLUDE_LOWPASS);
+            if (verbosity > 0)
+                fprintf (stderr, "%d-tap sinc downsampler with lowpass at %g Hz\n", num_taps, sample_ratio * lowpass_ratio * sample_rate / 2.0);
+        }
+        else if (lowpass_ratio < 1.0) {
+            resampler = resampleInit (num_channels, num_taps, num_filters, lowpass_ratio, flags | INCLUDE_LOWPASS);
 
-        if (verbosity > 0)
-            fprintf (stderr, "%d-tap sinc resampler with lowpass at %g Hz\n", num_taps, lowpass_ratio * sample_rate / 2.0);
-    }
-    else {
-        resampler = resampleInit (num_channels, num_taps, num_filters, 1.0, flags);
+            if (verbosity > 0)
+                fprintf (stderr, "%d-tap sinc resampler with lowpass at %g Hz\n", num_taps, lowpass_ratio * sample_rate / 2.0);
+        }
+        else {
+            resampler = resampleInit (num_channels, num_taps, num_filters, 1.0, flags);
 
-        if (verbosity > 0)
-            fprintf (stderr, "%d-tap pure sinc resampler (no lowpass), %g Hz Nyquist\n", num_taps, sample_rate / 2.0);
+            if (verbosity > 0)
+                fprintf (stderr, "%d-tap pure sinc resampler (no lowpass), %g Hz Nyquist\n", num_taps, sample_rate / 2.0);
+        }
+
+        samples_to_append = num_taps / 2;
     }
 
     if (lowpass_ratio / sample_ratio < 0.98 && pre_post_filter && !pre_filter) {
@@ -626,8 +656,10 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         }
 
     if (outbits != 32) {
-        memset (error, 0, sizeof (error));
-        tpdf_dither_init (num_channels);
+        if (test_non_interleaved && non_interleaved_bytes)
+            decimator = decimateInit (num_channels, outbits, non_interleaved_bytes, 1.0, resample_rate, dither | noise_shaping);
+        else
+            decimator = decimateInit (num_channels, outbits, (outbits + 7) / 8, 1.0, resample_rate, dither | noise_shaping);
     }
 
     if (inbits != 32 || outbits != 32) {
@@ -646,7 +678,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     }
 
     // this takes care of the filter delay and any user-specified phase shift
-    resampleAdvancePosition (resampler, num_taps / 2.0 + phase_shift);
+    if (resampler)
+        resampleAdvancePosition (resampler, num_taps / 2.0 + phase_shift);
 
     uint32_t progress_divider = 0, percent;
 
@@ -682,35 +715,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             samples_to_append -= samples_to_append_now;
         }
 
-        if (inbits <= 8) {
-            float gain_factor = gain / 128.0;
-            int i;
-
-            for (i = 0; i < samples_read * num_channels; ++i)
-                inbuffer [i] = ((int) tmpbuffer [i] - 128) * gain_factor;
-        }
-        else if (inbits <= 16) {
-            float gain_factor = gain / 32768.0;
-            int i, j;
-
-            for (i = j = 0; i < samples_read * num_channels; ++i) {
-                int16_t value = tmpbuffer [j++];
-                value += tmpbuffer [j++] << 8;
-                inbuffer [i] = value * gain_factor;
-            }
-        }
-        else if (inbits <= 24) {
-            float gain_factor = gain / 8388608.0;
-            int i, j;
-
-            for (i = j = 0; i < samples_read * num_channels; ++i) {
-                int32_t value = tmpbuffer [j++];
-                value += tmpbuffer [j++] << 8;
-                value += (int32_t) (signed char) tmpbuffer [j++] << 16;
-                inbuffer [i] = value * gain_factor;
-            }
-        }
-        else {
+        if (inbits > 24) {
             if (IS_BIG_ENDIAN) {
                 unsigned char *bptr = (unsigned char *) inbuffer, word [4];
                 int wcount = samples_read * num_channels;
@@ -728,6 +733,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
                 for (int i = 0; i < samples_read * num_channels; ++i)
                     inbuffer [i] *= gain;
         }
+        else
+            floatIntegersLE (tmpbuffer, gain, inbits, (inbits + 7) / 8, 1, inbuffer, samples_read * num_channels);
 
         // common code to process the audio in 32-bit floats
 
@@ -737,8 +744,14 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
                 biquad_apply_buffer (&lowpass [i] [1], inbuffer + i, samples_read, num_channels);
             }
 
-        res = resampleProcessInterleaved (resampler, inbuffer, samples_read, outbuffer, outbuffer_samples, sample_ratio);
-        samples_generated = res.output_generated;
+        if (resampler) {
+            res = resampleProcessInterleaved (resampler, inbuffer, samples_read, outbuffer, outbuffer_samples, sample_ratio);
+            samples_generated = res.output_generated;
+        }
+        else {
+            memcpy (outbuffer, inbuffer, samples_read * num_channels * sizeof (float));
+            samples_generated = samples_read;
+        }
 
         if (post_filter)
             for (int i = 0; i < num_channels; ++i) {
@@ -749,36 +762,46 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         // finally write the audio, converting to appropriate integer format if requested
 
         if (outbits != 32) {
-            float scaler = (1 << outbits) / 2.0;
-            int32_t offset = (outbits <= 8) * 128;
-            int32_t highclip = (1 << (outbits - 1)) - 1;
-            int32_t lowclip = ~highclip;
-            int leftshift = (24 - outbits) % 8;
-            int i, j;
+            if (test_non_interleaved) {
+                unsigned char *const output_array [num_channels];
+                const float* const input_array [num_channels];
+                unsigned char *destinptr = tmpbuffer;
+                int outbytes = (outbits + 7) / 8;
+                float *sourceptr = outbuffer;
 
-            for (i = j = 0; i < samples_generated * num_channels; ++i) {
-                int chan = i % num_channels;
-                int32_t output = floor ((outbuffer [i] *= scaler) - error [chan] + tpdf_dither (chan, -1) + 0.5);
+                for (int c = 0; c < num_channels; ++c) {
+                    if (non_interleaved_bytes)
+                        ((unsigned char**) output_array) [c] = malloc (samples_generated * non_interleaved_bytes);
+                    else
+                        ((unsigned char**) output_array) [c] = malloc (samples_generated * sizeof (unsigned char) * outbytes);
 
-                if (output > highclip) {
-                    clipped_samples++;
-                    output = highclip;
-                }
-                else if (output < lowclip) {
-                    clipped_samples++;
-                    output = lowclip;
+                    ((float**) input_array) [c] = malloc (samples_generated * sizeof (float));
                 }
 
-                error [chan] += output - outbuffer [i];
-                tmpbuffer [j++] = output = (output << leftshift) + offset;
+                for (int i = 0; i < samples_generated; ++i)
+                    for (int c = 0; c < num_channels; ++c)
+                        ((float**) input_array) [c] [i] = *sourceptr++;
 
-                if (outbits > 8) {
-                    tmpbuffer [j++] = output >> 8;
+                clipped_samples += decimateProcessLE (decimator, input_array, samples_generated, output_array);
 
-                    if (outbits > 16)
-                        tmpbuffer [j++] = output >> 16;
+                for (int i = 0; i < samples_generated; ++i)
+                    for (int c = 0; c < num_channels; ++c) {
+                        unsigned char *src = ((unsigned char *) output_array [c]) + i * outbytes;
+
+                        if (non_interleaved_bytes)
+                            src = ((unsigned char *) output_array [c]) + i * non_interleaved_bytes + (non_interleaved_bytes - outbytes);
+
+                        for (int j = 0; j < outbytes; ++j)
+                            *destinptr++ = *src++;
+                   }
+
+                for (int c = 0; c < num_channels; ++c) {
+                    free ((void *) output_array [c]);
+                    free ((void *) input_array [c]);
                 }
             }
+            else
+                clipped_samples += decimateProcessInterleavedLE (decimator, outbuffer, samples_generated, tmpbuffer);
 
             fwrite (tmpbuffer, num_channels * ((outbits + 7) / 8), samples_generated, outfile);
         }
@@ -814,8 +837,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     if (verbosity >= 0)
         fprintf (stderr, "\r...completed successfully\n");
 
+    decimateFree (decimator);
     resampleFree (resampler);
-    tpdf_dither_free ();
     free (inbuffer);
     free (outbuffer);
     free (tmpbuffer);
