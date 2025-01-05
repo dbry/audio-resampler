@@ -134,7 +134,7 @@ int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFra
             if (cxt->flags & SHAPING_ENABLED)
                 cxt->feedback [ch] = biquad_apply_sample (cxt->noise_shapers + ch, outvalue - codevalue);
 
-            *outp++ = outvalue = (outvalue << leftshift) + offset;
+            *outp++ = outvalue = ((uint32_t) outvalue << leftshift) + offset;
 
             if (cxt->outputBits > 8) {
                 *outp++ = outvalue >> 8;
@@ -184,7 +184,7 @@ int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInpu
             if (cxt->flags & SHAPING_ENABLED)
                 cxt->feedback [ch] = biquad_apply_sample (cxt->noise_shapers + ch, outvalue - codevalue);
 
-            *output++ = outvalue = (outvalue << leftshift) + offset;
+            *output++ = outvalue = ((uint32_t) outvalue << leftshift) + offset;
 
             if (cxt->outputBits > 8) {
                 *output++ = outvalue >> 8;
@@ -290,7 +290,7 @@ void floatIntegersLE (unsigned char *input, float inputGain, int inputBits, int 
         for (i = 0; i < numSamples; ++i, input += post_skip) {
             int32_t value = *input++;
             value += *input++ << 8;
-            value += (int32_t) (signed char) *input++ << 16;
+            value += (uint32_t) (signed char) *input++ << 16;
             *output++ = value * gain_factor;
         }
     }
