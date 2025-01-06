@@ -2,7 +2,7 @@
 
 Audio Resampling Engine & Command-Line Tool
 
-Copyright (c) 2022 David Bryant.
+Copyright (c) 2025 David Bryant.
 
 All Rights Reserved.
 
@@ -18,8 +18,9 @@ converter) applications because it provides a function to query the exact phase 
 
 The package includes a command-line program (**ART**) to experiment with the resampler and serve as example
 code for the engine API. The resampling and filtering code works with only 32-bit float audio data, however
-the command-line program includes examples of how to convert to and from integer audio samples, including
-the use of highpass TPDF dither and 1st-order noise shaping.
+there is also code provided to convert to and from integer audio samples. The decimation includes several
+configurable options for dither and noise-shaping, including strong ATH filters tailored for popular
+sampling rates.
 
 **ART** works with Microsoft WAV files and includes four quality presets that set the number and size of
 the sinc filters and serve as a starting point for experimentation:
@@ -51,8 +52,7 @@ initialization representing subdivisions of the unit circle. Normally, the outpu
 by convolving the input samples (the required history is stored in the resampler) with the two sinc filters
 on either side of the desired phase angle, and then linear interpolating to get the precise result. If it is
 known that there will always be an exact sinc filter (or there's enough room for many filters) then the
-interpolation can be skipped and only the nearest sinc filter is used (controlled with the **-n** option
-in the CLI).
+interpolation can be skipped and only the nearest sinc filter is used.
 
 The sinc filters are generated with either Hann or Blackman-Harris (4 term) windowing functions. The
 Blackman-Harris is usually the best choice (and the default in the CLI) because it has very good stopband
@@ -74,11 +74,16 @@ or after upsampling as this can be more efficient than increasing the length of 
 enabled with the **-p** option in the CLI and implements a cascaded pair of 2nd-order biquads. Note that
 unlike the sinc filters, these filters are not linear-phase and will introduce group delay.
 
+For version 0.3 the decimation code has been moved from the command-line program into its own module
+and header file (decimator.[ch]) so that it can be utilized by other applications. Also, the dither and
+noise-shaping are now configurable and the noise-shaping defaults to strong ATH filters for popular
+sampling rates based on [this excellent guide](https://wiki.hydrogenaud.io/index.php?title=Noise_shaping).
+
 ## Building
 
-To build the command-line tool (**ART**) on Linux or OS-X:
+To build an optimized version of the command-line tool (**ART**) on Linux or OS-X:
 
-> $ gcc -Ofast art.c resampler.c biquad.c -lm -o art
+> $ gcc -O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math art.c resampler.c decimator.c biquad.c -lm -o art
 
 The "help" display from the command-line app:
 
@@ -93,7 +98,15 @@ The "help" display from the command-line app:
            -f<num>     = number of sinc filters (2-1024)
            -t<num>     = number of sinc taps (4-1024, multiples of 4)
            -o<bits>    = change output file bitdepth (4-24 or 32)
-           -n          = use nearest filter (don't interpolate)
+           -d<sel>     = override default dither (which is HP tpdf):
+                           sel = 0 for no dither
+                           sel = 1 for flat tpdf dither
+                           sel = 2 for LP tpdf dither
+           -n<sel>     = override default noise-shaping (which is ATH)
+                           sel = 0 for no noise-shaping
+                           sel = 1 for 1st-order shaping
+                           sel = 2 for 2nd-order shaping
+                           sel = 3 for 3rd-order shaping
            -b          = Blackman-Harris windowing (best stopband)
            -h          = Hann windowing (fastest transition)
            -p          = pre/post filtering (cascaded biquads)

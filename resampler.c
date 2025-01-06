@@ -369,7 +369,8 @@ void resampleFree (Resample *cxt)
 // bulk of the CPU load (assuming reasonably long filters). The first version is the canonical
 // form for reference, followed by two variations that are more accurate and incorporate various
 // degrees of parallelization that can be utilized by optimizing compilers. Try 'em and use the
-// fastest, or rewrite them using SIMD.
+// fastest, or rewrite them using SIMD. Note that changing the "sum" variable from a float to
+// a double improves the quality somewhat at the possible expense of speed.
 
 #if 0   // Version 1 (canonical, very simple but slow and less accurate, not recommended)
 static double apply_filter (float *A, float *B, int num_taps)
