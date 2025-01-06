@@ -44,8 +44,6 @@ static const char *usage =
 "                           sel = 1 for 1st-order shaping\n"
 "                           sel = 2 for 2nd-order shaping\n"
 "                           sel = 3 for 3rd-order shaping\n"
-"           -i<bytes>   = test non-interleaved decimator (debug only)\n"
-"           -0          = disable sinc resampler completely (debug only)\n"
 "           -b          = Blackman-Harris windowing (best stopband)\n"
 "           -h          = Hann windowing (fastest transition)\n"
 "           -p          = pre/post filtering (cascaded biquads)\n"
@@ -57,7 +55,6 @@ static const char *usage =
 static int wav_process (char *infilename, char *outfilename);
 static int bh4_window, hann_window, num_taps = 256, num_filters = 256, outbits, verbosity, pre_post_filter;
 static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE;
-static int test_non_interleaved, non_interleaved_bytes;
 static unsigned long resample_rate, lowpass_freq;
 static double phase_shift, gain = 1.0;
 
@@ -77,10 +74,6 @@ int main (argc, argv) int argc; char **argv;
 #endif
             while (*++*argv)
                 switch (**argv) {
-
-		    case '0':                           // for debug only (forces resampler off)
-			num_filters = num_taps = 0;
-			break;
 
 		    case '1':
 			num_filters = num_taps = 16;
@@ -197,12 +190,6 @@ int main (argc, argv) int argc; char **argv;
                             return 1;
                         }
 
-			--*argv;
-			break;
-
-		    case 'I': case 'i':
-			non_interleaved_bytes = strtod (++*argv, argv);
-                        test_non_interleaved = 1;
 			--*argv;
 			break;
 
@@ -659,12 +646,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         }
     }
 
-    if (outbits != 32) {
-        if (test_non_interleaved && non_interleaved_bytes)
-            decimator = decimateInit (num_channels, outbits, non_interleaved_bytes, 1.0, resample_rate, dither | noise_shaping);
-        else
-            decimator = decimateInit (num_channels, outbits, (outbits + 7) / 8, 1.0, resample_rate, dither | noise_shaping);
-    }
+    if (outbits != 32)
+        decimator = decimateInit (num_channels, outbits, (outbits + 7) / 8, 1.0, resample_rate, dither | noise_shaping);
 
     if (inbits != 32 || outbits != 32) {
         int max_samples = BUFFER_SAMPLES, max_bytes = 2;
@@ -766,47 +749,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         // finally write the audio, converting to appropriate integer format if requested
 
         if (outbits != 32) {
-            if (test_non_interleaved) {
-                unsigned char *const output_array [num_channels];
-                const float* const input_array [num_channels];
-                unsigned char *destinptr = tmpbuffer;
-                int outbytes = (outbits + 7) / 8;
-                float *sourceptr = outbuffer;
-
-                for (int c = 0; c < num_channels; ++c) {
-                    if (non_interleaved_bytes)
-                        ((unsigned char**) output_array) [c] = malloc (samples_generated * non_interleaved_bytes);
-                    else
-                        ((unsigned char**) output_array) [c] = malloc (samples_generated * sizeof (unsigned char) * outbytes);
-
-                    ((float**) input_array) [c] = malloc (samples_generated * sizeof (float));
-                }
-
-                for (int i = 0; i < samples_generated; ++i)
-                    for (int c = 0; c < num_channels; ++c)
-                        ((float**) input_array) [c] [i] = *sourceptr++;
-
-                clipped_samples += decimateProcessLE (decimator, input_array, samples_generated, output_array);
-
-                for (int i = 0; i < samples_generated; ++i)
-                    for (int c = 0; c < num_channels; ++c) {
-                        unsigned char *src = ((unsigned char *) output_array [c]) + i * outbytes;
-
-                        if (non_interleaved_bytes)
-                            src = ((unsigned char *) output_array [c]) + i * non_interleaved_bytes + (non_interleaved_bytes - outbytes);
-
-                        for (int j = 0; j < outbytes; ++j)
-                            *destinptr++ = *src++;
-                   }
-
-                for (int c = 0; c < num_channels; ++c) {
-                    free ((void *) output_array [c]);
-                    free ((void *) input_array [c]);
-                }
-            }
-            else
-                clipped_samples += decimateProcessInterleavedLE (decimator, outbuffer, samples_generated, tmpbuffer);
-
+            clipped_samples += decimateProcessInterleavedLE (decimator, outbuffer, samples_generated, tmpbuffer);
             fwrite (tmpbuffer, num_channels * ((outbits + 7) / 8), samples_generated, outfile);
         }
         else {
