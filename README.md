@@ -119,10 +119,10 @@ The "help" display from the command-line app:
 
 ## Caveats
 
-- The resampling engine is a single C file, with another C file for the biquad filters. Don't expect
-the quality and performance of more advanced libraries, but also don't expect much difficulty integrating
-it. The simplicity and flexibility of this code might make it appealing for many applications, especially
-on limited-resource systems.
+- The resampling engine is a single C file, with another C file for the biquad filters (now 4th-order)
+and another for the decimation. Don't expect the quality and performance of more advanced libraries,
+but also don't expect much difficulty integrating it. The simplicity and flexibility of this code
+might make it appealing for many applications, especially on limited-resource systems.
 - In the command-line program, unknown RIFF chunk types are correctly parsed on input files, but are
 *not* passed to the output file, and pipes are not supported.
 - The command-line program is not very restrictive about the option parameters, so it's very easy to
