@@ -570,8 +570,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     float *const outbuffer = malloc (outbuffer_samples * num_channels * sizeof (float));
     float *inbuffer = malloc (BUFFER_SAMPLES * num_channels * sizeof (float));
     int samples_to_append = 0, pre_filter = 0, post_filter = 0;
+    Biquad *lowpass1 = NULL, *lowpass2 = NULL;
     int flags = SUBSAMPLE_INTERPOLATE;
-    Biquad lowpass [num_channels] [2];
     BiquadCoefficients lowpass_coeff;
     unsigned char *tmpbuffer = NULL;
     void *readbuffer = inbuffer;
@@ -649,11 +649,15 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             fprintf (stderr, "cascaded biquad post-filter at %g Hz\n", resample_rate * cutoff);
     }
 
-    if (pre_filter || post_filter)
+    if (pre_filter || post_filter) {
+        lowpass1 = calloc (num_channels, sizeof (Biquad));
+        lowpass2 = calloc (num_channels, sizeof (Biquad));
+
         for (int i = 0; i < num_channels; ++i) {
-            biquad_init (&lowpass [i] [0], &lowpass_coeff, 1.0);
-            biquad_init (&lowpass [i] [1], &lowpass_coeff, 1.0);
+            biquad_init (lowpass1 + i, &lowpass_coeff, 1.0);
+            biquad_init (lowpass2 + i, &lowpass_coeff, 1.0);
         }
+    }
 
     if (outbits != 32) {
         if (test_non_interleaved && non_interleaved_bytes)
@@ -740,8 +744,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
         if (pre_filter)
             for (int i = 0; i < num_channels; ++i) {
-                biquad_apply_buffer (&lowpass [i] [0], inbuffer + i, samples_read, num_channels);
-                biquad_apply_buffer (&lowpass [i] [1], inbuffer + i, samples_read, num_channels);
+                biquad_apply_buffer (lowpass1 + i, inbuffer + i, samples_read, num_channels);
+                biquad_apply_buffer (lowpass2 + i, inbuffer + i, samples_read, num_channels);
             }
 
         if (resampler) {
@@ -755,8 +759,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
         if (post_filter)
             for (int i = 0; i < num_channels; ++i) {
-                biquad_apply_buffer (&lowpass [i] [0], outbuffer + i, samples_generated, num_channels);
-                biquad_apply_buffer (&lowpass [i] [1], outbuffer + i, samples_generated, num_channels);
+                biquad_apply_buffer (lowpass1 + i, outbuffer + i, samples_generated, num_channels);
+                biquad_apply_buffer (lowpass2 + i, outbuffer + i, samples_generated, num_channels);
             }
 
         // finally write the audio, converting to appropriate integer format if requested
@@ -842,6 +846,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     free (inbuffer);
     free (outbuffer);
     free (tmpbuffer);
+    free (lowpass1);
+    free (lowpass2);
 
     if (clipped_samples)
         fprintf (stderr, "warning: %lu samples were clipped, suggest reducing gain!\n", clipped_samples);
