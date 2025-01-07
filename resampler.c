@@ -428,6 +428,7 @@ static void init_filter (Resample *cxt, float *filter, double fraction, double l
     const double a2 = 0.14128;
     const double a3 = 0.01168;
     double filter_sum = 0.0;
+    double scaler, error = 0.0;
     int i;
 
     // "dist" is the absolute distance from the sinc maximum to the filter tap to be calculated, in radians
@@ -457,7 +458,8 @@ static void init_filter (Resample *cxt, float *filter, double fraction, double l
 
     // filter should have unity DC gain
 
-    double scaler = 1.0 / filter_sum, error = 0.0;
+    scaler = 1.0 / filter_sum;
+    error = 0.0;
 
     for (i = cxt->numTaps / 2; i < cxt->numTaps; i = cxt->numTaps - i - (i >= cxt->numTaps / 2)) {
         filter [i] = (cxt->tempFilter [i] *= scaler) - error;

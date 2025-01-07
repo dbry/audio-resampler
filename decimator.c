@@ -218,10 +218,11 @@ void decimateFree (Decimate *cxt)
 static inline double tpdf_dither (uint32_t *generator, int type)
 {
     uint32_t random = *generator;
+    uint32_t first ;
 
     random = ((random << 4) - random) ^ 1;
     random = ((random << 4) - random) ^ 1;
-    uint32_t first = type ? *generator ^ ((int32_t) type >> 31) : ~random;
+    first = type ? *generator ^ ((int32_t) type >> 31) : ~random;
     random = ((random << 4) - random) ^ 1;
     random = ((random << 4) - random) ^ 1;
     *generator = random = ((random << 4) - random) ^ 1;
