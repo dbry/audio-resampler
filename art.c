@@ -841,10 +841,10 @@ static int write_pcm_wav_header (FILE *outfile, int bps, int num_channels, unsig
         wavhdr.FormatTag = WAVE_FORMAT_EXTENSIBLE;
         wavhdr.BitsPerSample = bps;
         wavhdr.GUID [4] = 0x10;
-        wavhdr.GUID [6] = 0x80;
-        wavhdr.GUID [9] = 0xaa;
+        wavhdr.GUID [6] = '\x80';
+        wavhdr.GUID [9] = '\xaa';
         wavhdr.GUID [11] = 0x38;
-        wavhdr.GUID [12] = 0x9b;
+        wavhdr.GUID [12] = '\x9b';
         wavhdr.GUID [13] = 0x71;
     }
 
