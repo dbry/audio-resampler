@@ -217,8 +217,7 @@ void decimateFree (Decimate *cxt)
 
 static inline double tpdf_dither (uint32_t *generator, int type)
 {
-    uint32_t random = *generator;
-    uint32_t first ;
+    uint32_t random = *generator, first;
 
     random = ((random << 4) - random) ^ 1;
     random = ((random << 4) - random) ^ 1;
@@ -226,6 +225,7 @@ static inline double tpdf_dither (uint32_t *generator, int type)
     random = ((random << 4) - random) ^ 1;
     random = ((random << 4) - random) ^ 1;
     *generator = random = ((random << 4) - random) ^ 1;
+
     return (((first >> 1) + (random >> 1)) / 2147483648.0) - 1.0;
 }
 
@@ -239,7 +239,7 @@ static void shaper_init (Biquad *f, float a0, float a1, float a2, float a3, floa
     BiquadCoefficients coeffs = { 0 };
 
     if (a0 != 1.0) {
-        fprintf (stderr, "shaper_init() error: a0 = %g, should be zero!\n", a0);
+        fprintf (stderr, "shaper_init() error: a0 = %g, should be one!\n", a0);
         exit (1);
     }
 

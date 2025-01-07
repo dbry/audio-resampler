@@ -423,12 +423,11 @@ static double apply_filter(float* A, float* B, int num_taps)
 
 static void init_filter (Resample *cxt, float *filter, double fraction, double lowpass_ratio)
 {
+    double filter_sum = 0.0, scaler, error;
     const double a0 = 0.35875;
     const double a1 = 0.48829;
     const double a2 = 0.14128;
     const double a3 = 0.01168;
-    double filter_sum = 0.0;
-    double scaler, error = 0.0;
     int i;
 
     // "dist" is the absolute distance from the sinc maximum to the filter tap to be calculated, in radians

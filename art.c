@@ -60,8 +60,7 @@ static double phase_shift, gain = 1.0;
 
 int main (argc, argv) int argc; char **argv;
 {
-    int overwrite = 0;
-    int res;
+    int overwrite = 0, res;
     char *infilename = NULL, *outfilename = NULL;
     FILE *outfile;
 
@@ -294,7 +293,7 @@ typedef struct {
     } Samples;
     int32_t ChannelMask;
     uint16_t SubFormat;
-    char GUID [14];
+    unsigned char GUID [14];
 } WaveHeader;
 
 #define WaveHeaderFormat "SSLLSSSSLS"
@@ -841,10 +840,10 @@ static int write_pcm_wav_header (FILE *outfile, int bps, int num_channels, unsig
         wavhdr.FormatTag = WAVE_FORMAT_EXTENSIBLE;
         wavhdr.BitsPerSample = bps;
         wavhdr.GUID [4] = 0x10;
-        wavhdr.GUID [6] = '\x80';
-        wavhdr.GUID [9] = '\xaa';
+        wavhdr.GUID [6] = 0x80;
+        wavhdr.GUID [9] = 0xaa;
         wavhdr.GUID [11] = 0x38;
-        wavhdr.GUID [12] = '\x9b';
+        wavhdr.GUID [12] = 0x9b;
         wavhdr.GUID [13] = 0x71;
     }
 
