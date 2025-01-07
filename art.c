@@ -58,7 +58,7 @@ static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE;
 static unsigned long resample_rate, lowpass_freq;
 static double phase_shift, gain = 1.0;
 
-int main (argc, argv) int argc; char **argv;
+int main (int argc, char **argv)
 {
     int overwrite = 0, res;
     char *infilename = NULL, *outfilename = NULL;
