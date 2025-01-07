@@ -60,7 +60,7 @@ static double phase_shift, gain = 1.0;
 
 int main (argc, argv) int argc; char **argv;
 {
-    int overwrite = 0;
+    int overwrite = 0, res;
     char *infilename = NULL, *outfilename = NULL;
     FILE *outfile;
 
@@ -260,7 +260,7 @@ int main (argc, argv) int argc; char **argv;
         return -1;
     }
 
-    int res = wav_process (infilename, outfilename);
+    res = wav_process (infilename, outfilename);
 
     free (infilename);
     free (outfilename);
@@ -293,7 +293,7 @@ typedef struct {
     } Samples;
     int32_t ChannelMask;
     uint16_t SubFormat;
-    char GUID [14];
+    unsigned char GUID [14];
 } WaveHeader;
 
 #define WaveHeaderFormat "SSLLSSSSLS"
@@ -313,6 +313,7 @@ static int wav_process (char *infilename, char *outfilename)
 {
     int format = 0, res = 0, inbits = 0, num_channels = 0;
     unsigned long num_samples = 0, sample_rate = 0;
+    unsigned int output_samples;
     uint32_t channel_mask = 0;
     FILE *infile, *outfile;
     RiffChunkHeader riff_chunk_header;
@@ -525,7 +526,7 @@ static int wav_process (char *infilename, char *outfilename)
         return -1;
     }
 
-    unsigned int output_samples = process_audio (infile, outfile, sample_rate, num_samples, num_channels, inbits);
+    output_samples = process_audio (infile, outfile, sample_rate, num_samples, num_channels, inbits);
 
     // write an extra padding zero byte if the data chunk is not an even size
 
@@ -559,6 +560,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     int samples_to_append = 0, pre_filter = 0, post_filter = 0;
     Biquad *lowpass1 = NULL, *lowpass2 = NULL;
     int flags = SUBSAMPLE_INTERPOLATE;
+    uint32_t progress_divider = 0, percent;
     BiquadCoefficients lowpass_coeff;
     unsigned char *tmpbuffer = NULL;
     void *readbuffer = inbuffer;
@@ -637,10 +639,12 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     }
 
     if (pre_filter || post_filter) {
+        int  i;
+
         lowpass1 = calloc (num_channels, sizeof (Biquad));
         lowpass2 = calloc (num_channels, sizeof (Biquad));
 
-        for (int i = 0; i < num_channels; ++i) {
+        for (i = 0; i < num_channels; ++i) {
             biquad_init (lowpass1 + i, &lowpass_coeff, 1.0);
             biquad_init (lowpass2 + i, &lowpass_coeff, 1.0);
         }
@@ -667,8 +671,6 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     // this takes care of the filter delay and any user-specified phase shift
     if (resampler)
         resampleAdvancePosition (resampler, num_taps / 2.0 + phase_shift);
-
-    uint32_t progress_divider = 0, percent;
 
     if (verbosity >= 0 && remaining_samples > 1000) {
         progress_divider = (remaining_samples + 50) / 100;
@@ -716,20 +718,24 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
                 }
             }
 
-            if (gain != 1.0)
-                for (int i = 0; i < samples_read * num_channels; ++i)
+            if (gain != 1.0) {
+                int  i;
+                for (i = 0; i < samples_read * num_channels; ++i)
                     inbuffer [i] *= gain;
+            }
         }
         else
             floatIntegersLE (tmpbuffer, gain, inbits, (inbits + 7) / 8, 1, inbuffer, samples_read * num_channels);
 
         // common code to process the audio in 32-bit floats
 
-        if (pre_filter)
-            for (int i = 0; i < num_channels; ++i) {
+        if (pre_filter) {
+            int  i;
+            for (i = 0; i < num_channels; ++i) {
                 biquad_apply_buffer (lowpass1 + i, inbuffer + i, samples_read, num_channels);
                 biquad_apply_buffer (lowpass2 + i, inbuffer + i, samples_read, num_channels);
             }
+        }
 
         if (resampler) {
             res = resampleProcessInterleaved (resampler, inbuffer, samples_read, outbuffer, outbuffer_samples, sample_ratio);
@@ -740,11 +746,13 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             samples_generated = samples_read;
         }
 
-        if (post_filter)
-            for (int i = 0; i < num_channels; ++i) {
+        if (post_filter) {
+            int  i;
+            for (i = 0; i < num_channels; ++i) {
                 biquad_apply_buffer (lowpass1 + i, outbuffer + i, samples_generated, num_channels);
                 biquad_apply_buffer (lowpass2 + i, outbuffer + i, samples_generated, num_channels);
             }
+        }
 
         // finally write the audio, converting to appropriate integer format if requested
 
