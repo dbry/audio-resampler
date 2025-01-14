@@ -44,6 +44,7 @@ static const char *usage =
 "                           sel = 1 for 1st-order shaping\n"
 "                           sel = 2 for 2nd-order shaping\n"
 "                           sel = 3 for 3rd-order shaping\n"
+"           -a          = allpass sinc (no lowpass, even downsampling)\n"
 "           -b          = Blackman-Harris windowing (best stopband)\n"
 "           -h          = Hann windowing (fastest transition)\n"
 "           -p          = pre/post filtering (cascaded biquads)\n"
@@ -53,7 +54,7 @@ static const char *usage =
 " Web:       Visit www.github.com/dbry/audio-resampler for latest version and info\n\n";
 
 static int wav_process (char *infilename, char *outfilename);
-static int bh4_window, hann_window, num_taps = 256, num_filters = 256, outbits, verbosity, pre_post_filter;
+static int bh4_window, hann_window, num_taps = 256, num_filters = 256, outbits, verbosity, pre_post_filter, allpass;
 static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE;
 static unsigned long resample_rate, lowpass_freq;
 static double phase_shift, gain = 1.0;
@@ -90,6 +91,10 @@ int main (int argc, char **argv)
 		    case '4':
 			num_filters = num_taps = 1024;
 			break;
+
+                    case 'A': case 'a':
+                        allpass = 1;
+                        break;
 
                     case 'P': case 'p':
                         pre_post_filter = 1;
@@ -607,13 +612,13 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     }
 
     if (num_filters && (sample_ratio != 1.0 || lowpass_ratio != 1.0 || phase_shift != 0.0)) {
-        if (sample_ratio < 1.0) {
+        if (sample_ratio < 1.0 && !allpass) {
             resampler = resampleInit (num_channels, num_taps, num_filters, sample_ratio * lowpass_ratio, flags | INCLUDE_LOWPASS);
 
             if (verbosity > 0)
                 fprintf (stderr, "%d-tap sinc downsampler with lowpass at %g Hz\n", num_taps, sample_ratio * lowpass_ratio * sample_rate / 2.0);
         }
-        else if (lowpass_ratio < 1.0) {
+        else if (lowpass_ratio < 1.0 && !allpass) {
             resampler = resampleInit (num_channels, num_taps, num_filters, lowpass_ratio, flags | INCLUDE_LOWPASS);
 
             if (verbosity > 0)
