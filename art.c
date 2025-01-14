@@ -28,10 +28,12 @@ static const char *sign_on = "\n"
 static const char *usage =
 " Usage:     ART [-options] infile.wav outfile.wav\n\n"
 " Options:  -1|2|3|4    = quality presets, default = 3\n"
-"           -r<Hz>      = resample to specified rate\n"
+"           -r<Hz>      = resample to specified rate in Hz\n"
+"                           (follow rate with 'k' for kHz)\n"
 "           -g<dB>      = apply gain (default = 0 dB)\n"
 "           -s<degrees> = add specified phase shift (+/-360 degrees)\n"
-"           -l<Hz>      = specify alternate lowpass frequency\n"
+"           -l<Hz>      = specify alternate lowpass frequency in Hz\n"
+"                           (follow freq with 'k' for kHz)\n"
 "           -f<num>     = number of sinc filters (2-1024)\n"
 "           -t<num>     = number of sinc taps (4-1024, multiples of 4)\n"
 "           -o<bits>    = change output file bitdepth (4-24 or 32)\n"
@@ -113,8 +115,17 @@ int main (int argc, char **argv)
                         break;
 
 		    case 'R': case 'r':
-			resample_rate = strtod (++*argv, argv);
-			--*argv;
+                        {
+                            double rate = strtod (++*argv, argv);
+
+                            if ((**argv & 0xdf) == 'K')
+                                rate *= 1000.0;
+                            else
+                                --*argv;
+
+                            resample_rate = rate;
+                        }
+
 			break;
 
 		    case 'D': case 'd':
@@ -183,8 +194,17 @@ int main (int argc, char **argv)
 			break;
 
 		    case 'L': case 'l':
-			lowpass_freq = strtod (++*argv, argv);
-			--*argv;
+                        {
+                            double freq = strtod (++*argv, argv);
+
+                            if ((**argv & 0xdf) == 'K')
+                                freq *= 1000.0;
+                            else
+                                --*argv;
+
+                            lowpass_freq = freq;
+                        }
+
 			break;
 
 		    case 'F': case 'f':
