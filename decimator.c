@@ -122,6 +122,9 @@ int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFra
             codevalue = (input [ch] [i] * scaler) - cxt->feedback [ch];
             outvalue = floor (codevalue + dither_value + 0.5);
 
+            if (cxt->flags & SHAPING_ENABLED)
+                cxt->feedback [ch] = biquad_apply_sample (cxt->noise_shapers + ch, outvalue - codevalue);
+
             if (outvalue > highclip) {
                 outvalue = highclip;
                 clipped_samples++;
@@ -130,9 +133,6 @@ int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFra
                 outvalue = lowclip;
                 clipped_samples++;
             }
-
-            if (cxt->flags & SHAPING_ENABLED)
-                cxt->feedback [ch] = biquad_apply_sample (cxt->noise_shapers + ch, outvalue - codevalue);
 
             *outp++ = outvalue = ((uint32_t) outvalue << leftshift) + offset;
 
@@ -172,6 +172,9 @@ int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInpu
             codevalue = (*input++ * scaler) - cxt->feedback [ch];
             outvalue = floor (codevalue + dither_value + 0.5);
 
+            if (cxt->flags & SHAPING_ENABLED)
+                cxt->feedback [ch] = biquad_apply_sample (cxt->noise_shapers + ch, outvalue - codevalue);
+
             if (outvalue > highclip) {
                 outvalue = highclip;
                 clipped_samples++;
@@ -180,9 +183,6 @@ int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInpu
                 outvalue = lowclip;
                 clipped_samples++;
             }
-
-            if (cxt->flags & SHAPING_ENABLED)
-                cxt->feedback [ch] = biquad_apply_sample (cxt->noise_shapers + ch, outvalue - codevalue);
 
             *output++ = outvalue = ((uint32_t) outvalue << leftshift) + offset;
 
