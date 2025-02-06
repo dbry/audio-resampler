@@ -84,7 +84,7 @@ my [audio-stretch](https://github.com/dbry/audio-stretch) library adapted to wor
 This is invoked with three new options, which are differentiated from previous options by being long form:
 **--pitch**, **--tempo** and **--duration**. Note that this is only available with mono and stereo files
 (not multichannel) and may not work at extreme sampling rates. Also be aware that this effect can generate
-**very audible and annoying artifacts**, expecially when used with large stretch ratios or with highly
+**very audible and annoying artifacts**, especially when used with large stretch ratios or with highly
 polyphonic source material. This is in contrast to the regular resampling operation that is intended
 to be completely transparent.
  
