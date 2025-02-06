@@ -13,8 +13,8 @@ Distributed under the [BSD Software License](https://github.com/dbry/audio-resam
 This is a simple audio resampler, written entirely in C and specifically targeting embedded systems. It
 provides fine control over both the CPU load and memory footprint so it can be easily adapted to a wide
 range of hardware (e.g., ESP32 to high-end ARM). It is also well suited for ASRC (asynchronous sample rate
-converter) applications because it provides a function to query the exact phase position of the resampler
-(which is required in the feedback loop of an ASRC).
+converter) applications because it allows the resample ratio to be modified continuously and provides a
+function to query the exact phase position of the resampler (required in the feedback loop of an ASRC).
 
 The package includes a command-line program (**ART**) to experiment with the resampler and serve as example
 code for the engine API. The resampling and filtering code works with only 32-bit float audio data, however
@@ -79,22 +79,37 @@ and header file (decimator.[ch]) so that it can be utilized by other application
 noise-shaping are now configurable and the noise-shaping defaults to strong ATH filters for popular
 sampling rates based on [this excellent guide](https://wiki.hydrogenaud.io/index.php?title=Noise_shaping).
 
+For version 0.4 the demo now allows for time stretching / pitch modification provided by a version of
+my [audio-stretch](https://github.com/dbry/audio-stretch) library adapted to work with 32-bit float audio.
+This is invoked with three new options, which are differentiated from previous options by being long form:
+**--pitch**, **--tempo** and **--duration**. Note that this is only available with mono and stereo files
+(not multichannel) and may not work at extreme sampling rates. Also be aware that this effect can generate
+**very audible and annoying artifacts**, expecially when used with large stretch ratios or with highly
+polyphonic source material. This is in contrast to the regular resampling operation that is intended
+to be completely transparent.
+ 
+
 ## Building
 
 To build an optimized version of the command-line tool (**ART**) on Linux or OS-X:
 
-> $ gcc -O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math art.c resampler.c decimator.c biquad.c -lm -o art
+> $ gcc -O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math art.c stretch.c resampler.c decimator.c biquad.c -lm -o art
 
 The "help" display from the command-line app:
 
 ```
+ ART  Audio Resampling Tool  Version 0.4
+ Copyright (c) 2006 - 2025 David Bryant.
+
  Usage:     ART [-options] infile.wav outfile.wav
 
  Options:  -1|2|3|4    = quality presets, default = 3
-           -r<Hz>      = resample to specified rate
+           -r<Hz>      = resample to specified rate in Hz
+                           (follow rate with 'k' for kHz)
            -g<dB>      = apply gain (default = 0 dB)
            -s<degrees> = add specified phase shift (+/-360 degrees)
-           -l<Hz>      = specify alternate lowpass frequency
+           -l<Hz>      = specify alternate lowpass frequency in Hz
+                           (follow freq with 'k' for kHz)
            -f<num>     = number of sinc filters (2-1024)
            -t<num>     = number of sinc taps (4-1024, multiples of 4)
            -o<bits>    = change output file bitdepth (4-24 or 32)
@@ -107,6 +122,7 @@ The "help" display from the command-line app:
                            sel = 1 for 1st-order shaping
                            sel = 2 for 2nd-order shaping
                            sel = 3 for 3rd-order shaping
+           -a          = allpass sinc (no lowpass, even downsampling)
            -b          = Blackman-Harris windowing (best stopband)
            -h          = Hann windowing (fastest transition)
            -p          = pre/post filtering (cascaded biquads)
@@ -114,7 +130,19 @@ The "help" display from the command-line app:
            -v          = verbose (display lots of info)
            -y          = overwrite outfile if it exists
 
+           Using any of the following options will invoke the audio-stretch
+           functionality that, unlike regular resampling, can result in very
+           audible and annoying artifacts, especially when used with large
+           stretch ratios or with highly polyphonic source material. Also,
+           these only work with mono or stereo audio (not multichannel).
+
+           --pitch=<cents>   = set pitch shift in cents (+/-2400)
+           --tempo=<ratio>   = set tempo ratio (0.25x - 4.0x)
+           --duration=<[+|-][[hh:]mm:]ss.ss> = set a target duration
+                                 (absolute or +/-relative to source)
+
  Web:       Visit www.github.com/dbry/audio-resampler for latest version and info
+
 ```
 
 ## Caveats

@@ -15,9 +15,10 @@
 
 #include "resampler.h"
 #include "decimator.h"
+#include "stretch.h"
 #include "biquad.h"
 
-#define VERSION         0.3
+#define VERSION         0.4
 
 #define IS_BIG_ENDIAN (*(uint16_t *)"\0\xff" < 0x0100)
 
@@ -53,13 +54,31 @@ static const char *usage =
 "           -q          = quiet mode (display errors only)\n"
 "           -v          = verbose (display lots of info)\n"
 "           -y          = overwrite outfile if it exists\n\n"
+"           Using any of the following options will invoke the audio-stretch\n"
+"           functionality that, unlike regular resampling, can result in very\n"
+"           audible and annoying artifacts, especially when used with large\n"
+"           stretch ratios or with highly polyphonic source material. Also,\n"
+"           these only work with mono or stereo audio (not multichannel).\n\n"
+"           --pitch=<cents>   = set pitch shift in cents (+/-2400)\n"
+"           --tempo=<ratio>   = set tempo ratio (0.25x - 4.0x)\n"
+"           --duration=<[+|-][[hh:]mm:]ss.ss> = set a target duration\n"
+"                                 (absolute or +/-relative to source)\n\n"
 " Web:       Visit www.github.com/dbry/audio-resampler for latest version and info\n\n";
 
 static int wav_process (char *infilename, char *outfilename);
+
 static int bh4_window, hann_window, num_taps = 256, num_filters = 256, outbits, verbosity, pre_post_filter, allpass;
 static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE;
+static double pitch_ratio = 1.0, tempo_ratio = 1.0;
 static unsigned long resample_rate, lowpass_freq;
 static double phase_shift, gain = 1.0;
+
+static struct time_spec {
+    int value_is_relative, value_is_valid;
+    double value;
+} duration;
+
+static void parse_time_spec (struct time_spec *dst, char *src);
 
 int main (int argc, char **argv)
 {
@@ -70,10 +89,48 @@ int main (int argc, char **argv)
     // loop through command-line arguments
 
     while (--argc) {
+        if (**++argv == '-' && (*argv)[1] == '-' && (*argv)[2]) {
+            char *long_option = *argv + 2, *long_param = long_option;
+
+            while (*long_param)
+                if (*long_param++ == '=')
+                    break;
+
+            if (!strncmp (long_option, "pitch", 5)) {                   // --pitch
+                double pitch_cents = strtod (long_param, NULL);
+
+                if (pitch_cents < -2400 || pitch_cents > 2400) {
+                    fprintf (stderr, "invalid pitch shift, must be +/- 2400 cents (2 octaves)!\n");
+                    return 1;
+                }
+
+                pitch_ratio = pow (2.0, pitch_cents / 1200.0);
+            }
+            else if (!strncmp (long_option, "tempo", 5)) {              // --tempo
+                tempo_ratio = strtod (long_param, NULL);
+
+                if (tempo_ratio < 0.25 || tempo_ratio > 4.0) {
+                    fprintf (stderr, "invalid tempo, must be 0.25 to 4.0!\n");
+                    return 1;
+                }
+            }
+            else if (!strncmp (long_option, "duration", 5)) {           // --duration
+                parse_time_spec (&duration, long_param);
+
+                if (!duration.value_is_valid) {
+                    fprintf (stderr, "invalid --duration parameter!\n");
+                    return 1;
+                }
+            }
+            else {
+                fprintf (stderr, "unknown option: %s !\n", long_option);
+                return 1;
+            }
+        }
 #if defined (_WIN32)
-        if ((**++argv == '-' || **argv == '/') && (*argv)[1])
+        else if ((**argv == '-' || **argv == '/') && (*argv)[1])
 #else
-        if ((**++argv == '-') && (*argv)[1])
+        else if ((**argv == '-') && (*argv)[1])
 #endif
             while (*++*argv)
                 switch (**argv) {
@@ -266,6 +323,11 @@ int main (int argc, char **argv)
         }
     }
 
+    if (duration.value_is_valid && tempo_ratio != 1.0) {
+        fprintf (stderr, "error: can't specify BOTH a tempo change and a target duration!\n");
+        return 1;
+    }
+
     if (verbosity >= 0)
         fprintf (stderr, sign_on, VERSION);
 
@@ -291,6 +353,43 @@ int main (int argc, char **argv)
     free (outfilename);
 
     return res;
+}
+
+// Parse the parameter of the --duration option, which is of the form:
+//   [+|-][[hh:]mm:]ss.ss
+// The value is returned in a double (in the "dst" struct) as absolute seconds,
+// and the sign and abs/rel selection is in the "value_is_relative" field.
+
+static void parse_time_spec (struct time_spec *dst, char *src)
+{
+    int colons = 0;
+
+    memset (dst, 0, sizeof (*dst));
+
+    if (*src == '+' || *src == '-')
+        dst->value_is_relative = (*src++ == '+') ? 1 : -1;
+
+    while (*src)
+        if (*src == ':') {
+            if (++colons == 3 || dst->value != floor (dst->value))
+                return;
+
+            src++;
+            dst->value *= 60.0;
+            continue;
+        }
+        else if (*src == '.' || isdigit (*src)) {
+            double temp = strtod (src, &src);
+
+            if (temp < 0.0 || (colons && temp >= 60.0))
+                return;
+
+            dst->value += temp;
+        }
+        else
+            return;
+
+    dst->value_is_valid = 1;
 }
 
 typedef struct {
@@ -553,6 +652,12 @@ static int wav_process (char *infilename, char *outfilename)
 
     output_samples = process_audio (infile, outfile, sample_rate, num_samples, num_channels, inbits);
 
+    if (output_samples == (unsigned int) -1) {
+        fclose (outfile);
+        fclose (infile);
+        return -1;
+    }
+
     // write an extra padding zero byte if the data chunk is not an even size
 
     if ((output_samples * num_channels * ((outbits + 7) / 8)) & 1)
@@ -577,20 +682,84 @@ static int wav_process (char *infilename, char *outfilename)
 static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sample_rate,
     unsigned long num_samples, int num_channels, int inbits)
 {
-    double sample_ratio = (double) resample_rate / sample_rate, lowpass_ratio = 1.0;
-    unsigned int outbuffer_samples = (int) floor (BUFFER_SAMPLES * sample_ratio * 1.1 + 100.0);
-    unsigned long remaining_samples = num_samples, output_samples = 0, clipped_samples = 0;
-    float *const outbuffer = malloc (outbuffer_samples * num_channels * sizeof (float));
-    float *inbuffer = malloc (BUFFER_SAMPLES * num_channels * sizeof (float));
-    int samples_to_append = 0, pre_filter = 0, post_filter = 0;
+    unsigned long remaining_samples = num_samples, output_samples = 0, clipped_samples = 0, target_output_samples;
+    float *inbuffer = malloc (BUFFER_SAMPLES * num_channels * sizeof (float)), *stretch_buffer = NULL, *outbuffer;
+    double sample_ratio = (double) resample_rate / sample_rate, lowpass_ratio = 1.0, stretch_ratio = 1.0;
+    int upper_frequency = 350, lower_frequency = 50, pre_filter = 0, post_filter = 0;
     Biquad *lowpass1 = NULL, *lowpass2 = NULL;
-    int flags = SUBSAMPLE_INTERPOLATE;
     uint32_t progress_divider = 0, percent;
+    float *resample_buffer = inbuffer;
     BiquadCoefficients lowpass_coeff;
     unsigned char *tmpbuffer = NULL;
+    unsigned int outbuffer_samples;
     void *readbuffer = inbuffer;
     Decimate *decimator = NULL;
     Resample *resampler = NULL;
+    Stretch *stretcher = NULL;
+
+    // if the user specified a target duration (absolute or relative), we calculate a tempo ratio here
+
+    if (duration.value_is_valid) {
+        double source_seconds = (double) num_samples / sample_rate, target_seconds;
+
+        switch (duration.value_is_relative) {
+            case -1:
+                target_seconds = source_seconds - duration.value;
+                break;
+
+            case 1:
+                target_seconds = source_seconds + duration.value;
+                break;
+
+            default:
+                target_seconds = duration.value;
+                break;
+        }
+
+        if (target_seconds <= 0.0) {
+            fprintf (stderr, "error: invalid relative duration specified!\n");
+            return -1;
+        }
+
+        tempo_ratio = source_seconds / target_seconds;
+    }
+
+    // if a stretch is probably required, initialize that here
+
+    if (pitch_ratio != 1.0 || tempo_ratio != 1.0) {
+        stretch_ratio = pitch_ratio / tempo_ratio;
+        sample_ratio /= pitch_ratio;
+
+        if (stretch_ratio != 1.0) {
+            int stretch_flags = (stretch_ratio < 0.5 || stretch_ratio > 2.0) ? STRETCH_DUAL_FLAG : 0;
+            int stretch_samples;
+
+            if (num_channels > 2) {
+                fprintf (stderr, "error: audio stretch only works with mono or stereo, not %d-channel\n", num_channels);
+                return -1;
+            }
+
+            if (stretch_ratio < 0.25 || stretch_ratio > 4.0) {
+                fprintf (stderr, "error: audio stretch requires excessive ratio %g\n", stretch_ratio);
+                return -1;
+            }
+
+            stretcher = stretchInit (sample_rate / upper_frequency, sample_rate / lower_frequency, num_channels, stretch_flags);
+            stretch_samples = stretchGetOutputCapacity (stretcher, BUFFER_SAMPLES, stretch_ratio);
+            resample_buffer = stretch_buffer = malloc (stretch_samples * num_channels * sizeof (float));
+            outbuffer_samples = (int) floor (stretch_samples * sample_ratio * 1.1 + 100.0);
+
+            if (verbosity > 0)
+                fprintf (stderr, "audio stretch initialized with ratio %g\n", stretch_ratio);
+        }
+        else 
+            outbuffer_samples = (int) floor (BUFFER_SAMPLES * sample_ratio * 1.1 + 100.0);
+    }
+    else 
+        outbuffer_samples = (int) floor (BUFFER_SAMPLES * sample_ratio * 1.1 + 100.0);
+
+    outbuffer = malloc (outbuffer_samples * num_channels * sizeof (float));
+    target_output_samples = (unsigned long) floor ((double) num_samples * stretch_ratio * sample_ratio + 0.5);
 
     // when downsampling, calculate the optimum lowpass based on resample filter
     // length (i.e., more taps allow us to lowpass closer to Nyquist)
@@ -619,9 +788,6 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             lowpass_ratio = user_lowpass_ratio;
     }
 
-    if (bh4_window || !hann_window)
-        flags |= BLACKMAN_HARRIS;
-
     if (lowpass_ratio * sample_ratio < 0.98 && pre_post_filter) {
         double cutoff = lowpass_ratio * sample_ratio / 2.0;
         biquad_lowpass (&lowpass_coeff, cutoff);
@@ -632,6 +798,11 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     }
 
     if (num_filters && (sample_ratio != 1.0 || lowpass_ratio != 1.0 || phase_shift != 0.0)) {
+        int flags = SUBSAMPLE_INTERPOLATE;
+
+        if (bh4_window || !hann_window)
+            flags |= BLACKMAN_HARRIS;
+
         if (sample_ratio < 1.0 && !allpass) {
             resampler = resampleInit (num_channels, num_taps, num_filters, sample_ratio * lowpass_ratio, flags | INCLUDE_LOWPASS);
 
@@ -650,8 +821,6 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             if (verbosity > 0)
                 fprintf (stderr, "%d-tap pure sinc resampler (no lowpass), %g Hz Nyquist\n", num_taps, sample_rate / 2.0);
         }
-
-        samples_to_append = num_taps / 2;
     }
 
     if (lowpass_ratio / sample_ratio < 0.98 && pre_post_filter && !pre_filter) {
@@ -702,7 +871,9 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         fprintf (stderr, "\rprogress: %d%% ", percent = 0); fflush (stderr);
     }
 
-    while (remaining_samples + samples_to_append) {
+    // loop until we have generated the target number of samples
+
+    while (output_samples < target_output_samples) {
 
         // first we read the audio data, converting to 32-bit float (if not already) and applying gain
 
@@ -716,17 +887,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         remaining_samples -= samples_read;
 
         if (!samples_read) {
-            int samples_to_append_now = samples_to_append;
-
-            if (!samples_to_append_now)
-                break;
-
-            if (samples_to_append_now > BUFFER_SAMPLES)
-                samples_to_append_now = BUFFER_SAMPLES;
-
-            memset (readbuffer, (inbits <= 8) * 128, samples_to_append_now * num_channels * ((inbits + 7) / 8));
-            samples_read = samples_to_append_now;
-            samples_to_append -= samples_to_append_now;
+            memset (readbuffer, (inbits <= 8) * 128, BUFFER_SAMPLES * num_channels * ((inbits + 7) / 8));
+            samples_read = BUFFER_SAMPLES;
         }
 
         if (inbits > 24) {
@@ -753,6 +915,12 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             floatIntegersLE (tmpbuffer, gain, inbits, (inbits + 7) / 8, 1, inbuffer, samples_read * num_channels);
 
         // common code to process the audio in 32-bit floats
+        // first step is any audio stretching, which is done into stretch_buffer
+
+        if (stretcher)
+            samples_read = stretchProcess (stretcher, inbuffer, samples_read, stretch_buffer, stretch_ratio);
+
+        // then any pre-filtering, which is done inline
 
         if (pre_filter) {
             int  i;
@@ -762,14 +930,18 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             }
         }
 
+        // next is the actual re-sampling, which is done into the output buffer
+
         if (resampler) {
-            res = resampleProcessInterleaved (resampler, inbuffer, samples_read, outbuffer, outbuffer_samples, sample_ratio);
+            res = resampleProcessInterleaved (resampler, resample_buffer, samples_read, outbuffer, outbuffer_samples, sample_ratio);
             samples_generated = res.output_generated;
         }
         else {
-            memcpy (outbuffer, inbuffer, samples_read * num_channels * sizeof (float));
+            memcpy (outbuffer, resample_buffer, samples_read * num_channels * sizeof (float));
             samples_generated = samples_read;
         }
+
+        // final processing is any post-filtering, which is done inline
 
         if (post_filter) {
             int  i;
@@ -780,6 +952,9 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         }
 
         // finally write the audio, converting to appropriate integer format if requested
+
+        if (output_samples + samples_generated > target_output_samples)
+            samples_generated = target_output_samples - output_samples;
 
         if (outbits != 32) {
             clipped_samples += decimateProcessInterleavedLE (decimator, outbuffer, samples_generated, tmpbuffer);
@@ -819,9 +994,11 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
     decimateFree (decimator);
     resampleFree (resampler);
-    free (inbuffer);
+    stretchFree (stretcher);
+    free (stretch_buffer);
     free (outbuffer);
     free (tmpbuffer);
+    free (inbuffer);
     free (lowpass1);
     free (lowpass2);
 
