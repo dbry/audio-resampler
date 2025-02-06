@@ -468,6 +468,10 @@ static int find_period (const Stretch *cxt, float *samples)
  * side of the peak are compared to calculate a more accurate center of the period.
  */
 
+#ifndef M_E
+#define M_E		2.7182818284590452354	/* e */
+#endif
+
 static int find_period_fast (const Stretch *cxt, const float *samples)
 {
     float sum, best_factor = 0;
