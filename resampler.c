@@ -105,8 +105,16 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
     cxt->tempFilter = malloc (numTaps * sizeof (double));
 
     for (i = 0; i <= cxt->numFilters; ++i) {
+        int j;
+
         cxt->filters [i] = calloc (cxt->numTaps, sizeof (float));
-        init_filter (cxt, cxt->filters [i], (double) i / cxt->numFilters, lowpassRatio);
+
+        if (i < cxt->numFilters)
+            init_filter (cxt, cxt->filters [i], (double) i / cxt->numFilters, lowpassRatio);
+        else
+            // the last filter is essentially identical to the first (just offset one tap)
+            for (j = 0; j < cxt->numTaps; ++j)
+                cxt->filters [cxt->numFilters] [(j+1) % cxt->numTaps] = cxt->filters [0] [j];
     }
 
     free (cxt->tempFilter); cxt->tempFilter = NULL;
