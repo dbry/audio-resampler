@@ -160,9 +160,10 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
 {
     int half_taps = cxt->numTaps / 2, i;
     ResampleResult res = { 0, 0 };
+    double offset2 = 0.0;
 
     while (numOutputFrames > 0) {
-        if (cxt->outputOffset >= cxt->inputIndex - half_taps) {
+        if (cxt->outputOffset + offset2 >= cxt->inputIndex - half_taps) {
             if (numInputFrames > 0) {
                 if (cxt->inputIndex == cxt->numSamples) {
                     for (i = 0; i < cxt->numChannels; ++i)
@@ -184,14 +185,14 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
         }
         else {
             for (i = 0; i < cxt->numChannels; ++i)
-                output [i] [res.output_generated] = subsample (cxt, cxt->buffers [i], cxt->outputOffset);
+                output [i] [res.output_generated] = subsample (cxt, cxt->buffers [i], cxt->outputOffset + offset2);
 
-            cxt->outputOffset += (1.0 / ratio);
-            res.output_generated++;
+            offset2 = ++res.output_generated / ratio;
             numOutputFrames--;
         }
     }
 
+    cxt->outputOffset += offset2;
     return res;
 }
 
@@ -203,9 +204,10 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, in
 {
     int half_taps = cxt->numTaps / 2, i;
     ResampleResult res = { 0, 0 };
+    double offset2 = 0.0;
 
     while (numOutputFrames > 0) {
-        if (cxt->outputOffset >= cxt->inputIndex - half_taps) {
+        if (cxt->outputOffset + offset2 >= cxt->inputIndex - half_taps) {
             if (numInputFrames > 0) {
                 if (cxt->inputIndex == cxt->numSamples) {
                     for (i = 0; i < cxt->numChannels; ++i)
@@ -227,14 +229,14 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, in
         }
         else {
             for (i = 0; i < cxt->numChannels; ++i)
-                *output++ = subsample (cxt, cxt->buffers [i], cxt->outputOffset);
+                *output++ = subsample (cxt, cxt->buffers [i], cxt->outputOffset + offset2);
 
-            cxt->outputOffset += (1.0 / ratio);
-            res.output_generated++;
+            offset2 = ++res.output_generated / ratio;
             numOutputFrames--;
         }
     }
 
+    cxt->outputOffset += offset2;
     return res;
 }
 
