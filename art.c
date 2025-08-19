@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////
 //                            **** ART ****                               //
 //                        Audio Resampling Tool                           //
-//                 Copyright (c) 2006-2023 David Bryant                   //
+//                 Copyright (c) 2006-2025 David Bryant                   //
 //                         All Rights Reserved                            //
 //      Distributed under the BSD Software License (see license.txt)      //
 ////////////////////////////////////////////////////////////////////////////
@@ -18,7 +18,7 @@
 #include "stretch.h"
 #include "biquad.h"
 
-#define VERSION         0.4
+#define VERSION         0.5
 
 #define IS_BIG_ENDIAN (*(uint16_t *)"\0\xff" < 0x0100)
 
@@ -679,6 +679,8 @@ static int wav_process (char *infilename, char *outfilename)
 
 #define BUFFER_SAMPLES          4096
 
+static unsigned long gcd (unsigned long a, unsigned long b);
+
 static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sample_rate,
     unsigned long num_samples, int num_channels, int inbits)
 {
@@ -798,7 +800,16 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     }
 
     if (num_filters && (sample_ratio != 1.0 || lowpass_ratio != 1.0 || phase_shift != 0.0)) {
+        unsigned long factor = resample_rate / gcd (sample_rate, resample_rate);
         int flags = SUBSAMPLE_INTERPOLATE;
+
+        if (factor < num_filters && phase_shift == 0.0) {
+            num_filters = factor > 2 ? factor : 2;
+            flags &= ~SUBSAMPLE_INTERPOLATE;
+
+            if (verbosity > 0)
+                fprintf (stderr, "resampling %lu --> %lu, reduced filters = %d\n", sample_rate, resample_rate, num_filters);
+        }
 
         if (bh4_window || !hann_window)
             flags |= BLACKMAN_HARRIS;
@@ -807,19 +818,22 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             resampler = resampleInit (num_channels, num_taps, num_filters, sample_ratio * lowpass_ratio, flags | INCLUDE_LOWPASS);
 
             if (verbosity > 0)
-                fprintf (stderr, "%d-tap sinc downsampler with lowpass at %g Hz\n", num_taps, sample_ratio * lowpass_ratio * sample_rate / 2.0);
+                fprintf (stderr, "%d %d-tap sinc downsamplers with lowpass at %g Hz, %s interpolation\n",
+                    num_filters, num_taps, sample_ratio * lowpass_ratio * sample_rate / 2.0, (flags & SUBSAMPLE_INTERPOLATE) ? "with" : "no");
         }
         else if (lowpass_ratio < 1.0 && !allpass) {
             resampler = resampleInit (num_channels, num_taps, num_filters, lowpass_ratio, flags | INCLUDE_LOWPASS);
 
             if (verbosity > 0)
-                fprintf (stderr, "%d-tap sinc resampler with lowpass at %g Hz\n", num_taps, lowpass_ratio * sample_rate / 2.0);
+                fprintf (stderr, "%d %d-tap sinc resamplers with lowpass at %g Hz, %s interpolation\n",
+                    num_filters, num_taps, lowpass_ratio * sample_rate / 2.0, (flags & SUBSAMPLE_INTERPOLATE) ? "with" : "no");
         }
         else {
             resampler = resampleInit (num_channels, num_taps, num_filters, 1.0, flags);
 
             if (verbosity > 0)
-                fprintf (stderr, "%d-tap pure sinc resampler (no lowpass), %g Hz Nyquist\n", num_taps, sample_rate / 2.0);
+                fprintf (stderr, "%d %d-tap pure sinc resamplers (no lowpass), %g Hz Nyquist, %s interpolation\n",
+                    num_filters, num_taps, sample_rate / 2.0, (flags & SUBSAMPLE_INTERPOLATE) ? "with" : "no");
         }
     }
 
@@ -1133,3 +1147,15 @@ static void native_to_little_endian (void *data, char *format)
     }
 }
 
+// greatest common divisor
+
+static unsigned long gcd (unsigned long a, unsigned long b)
+{
+    while (b) {
+        unsigned long t = (a %= b);
+        a = b;
+        b = t;
+    }
+
+    return a;
+}
