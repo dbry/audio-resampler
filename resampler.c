@@ -478,37 +478,34 @@ static void init_filter (Resample *cxt, float *filter, double fraction, double l
 
 static double subsample_no_interpolate (Resample *cxt, float *source, double offset)
 {
+    int fi = (int) floor ((offset - floor (offset)) * cxt->numFilters + 0.5);
+
     source += (int) floor (offset);
-    offset -= floor (offset);
 
-    if (offset == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
-        return *source;
+    if (!(cxt->flags & INCLUDE_LOWPASS) && !(fi % cxt->numFilters))
+        return source [fi / cxt->numFilters];
 
-    return apply_filter (
-        cxt->filters [(int) floor (offset * cxt->numFilters + 0.5)],
-        source - cxt->numTaps / 2 + 1, cxt->numTaps);
+    return apply_filter (cxt->filters [fi], source - cxt->numTaps / 2 + 1, cxt->numTaps);
 }
 
 static double subsample_interpolate (Resample *cxt, float *source, double offset)
 {
-    double sum1, sum2;
-    int i;
+    double frac = offset - floor (offset), sum;
+    int fi;
 
     source += (int) floor (offset);
-    offset -= floor (offset);
 
-     if (offset == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
+    if (frac == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
         return *source;
 
-    i = (int) floor (offset *= cxt->numFilters);
-    sum1 = apply_filter (cxt->filters [i], source - cxt->numTaps / 2 + 1, cxt->numTaps);
+    source -= cxt->numTaps / 2 - 1;
+    fi = (int) floor (frac *= cxt->numFilters);
+    sum = apply_filter (cxt->filters [fi], source, cxt->numTaps);
 
-    if ((offset -= i) == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
-        return sum1;
+    if ((frac -= fi) == 0.0)
+        return sum;
 
-    sum2 = apply_filter (cxt->filters [i+1], source - cxt->numTaps / 2 + 1, cxt->numTaps);
-
-    return sum2 * offset + sum1 * (1.0 - offset);
+    return apply_filter (cxt->filters [fi + 1], source, cxt->numTaps) * frac + sum * (1.0 - frac);
 }
 
 static double subsample (Resample *cxt, float *source, double offset)
