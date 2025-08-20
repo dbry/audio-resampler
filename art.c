@@ -35,7 +35,7 @@ static const char *usage =
 "           -s<degrees> = add specified phase shift (+/-360 degrees)\n"
 "           -l<Hz>      = specify alternate lowpass frequency in Hz\n"
 "                           (follow freq with 'k' for kHz)\n"
-"           -f<num>     = number of sinc filters (2-1024)\n"
+"           -f<num>     = number of sinc filters (1-1024)\n"
 "           -t<num>     = number of sinc taps (4-1024, multiples of 4)\n"
 "           -o<bits>    = change output file bitdepth (4-24 or 32)\n"
 "           -d<sel>     = override default dither (which is HP tpdf):\n"
@@ -267,8 +267,8 @@ int main (int argc, char **argv)
 		    case 'F': case 'f':
 			num_filters = strtod (++*argv, argv);
 
-                        if (num_filters < 2 || num_filters > 1024) {
-                            fprintf (stderr, "\nnum of filters must be 2 - 1024!\n");
+                        if (num_filters < 1 || num_filters > 1024) {
+                            fprintf (stderr, "\nnum of filters must be 1 - 1024!\n");
                             return 1;
                         }
 
@@ -804,8 +804,8 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         int flags = SUBSAMPLE_INTERPOLATE;
 
         if (factor < num_filters && phase_shift == 0.0) {
-            num_filters = factor > 2 ? factor : 2;
             flags &= ~SUBSAMPLE_INTERPOLATE;
+            num_filters = factor;
 
             if (verbosity > 0)
                 fprintf (stderr, "resampling %lu --> %lu, reduced filters = %d\n", sample_rate, resample_rate, num_filters);
