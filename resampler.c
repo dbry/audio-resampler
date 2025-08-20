@@ -26,7 +26,7 @@ static double subsample (Resample *cxt, float *source, double offset);
 //                    - linearly affects memory usage and CPU load of resampling
 //
 // numFilters:      the number of sinc filters generated
-//                    - must be 2 - 1024
+//                    - must be 1 - 1024
 //                    - affects quality of interpolated filtering
 //                    - linearly affects memory usage of resampler
 //
@@ -88,8 +88,8 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
         return NULL;
     }
 
-    if (numFilters < 2 || numFilters > 1024) {
-        fprintf (stderr, "must be 2-1024 filters!\n");
+    if (numFilters < 1 || numFilters > 1024) {
+        fprintf (stderr, "must be 1-1024 filters!\n");
         return NULL;
     }
 
@@ -491,21 +491,12 @@ static double subsample_no_interpolate (Resample *cxt, float *source, double off
 static double subsample_interpolate (Resample *cxt, float *source, double offset)
 {
     double frac = offset - floor (offset), sum;
-    int fi;
+    int fi = (int) floor (frac *= cxt->numFilters);
 
-    source += (int) floor (offset);
+    source += (int) floor (offset) - cxt->numTaps / 2 + 1;
+    sum = apply_filter (cxt->filters [fi], source, cxt->numTaps) * (1.0 - (frac -= fi));
 
-    if (frac == 0.0 && !(cxt->flags & INCLUDE_LOWPASS))
-        return *source;
-
-    source -= cxt->numTaps / 2 - 1;
-    fi = (int) floor (frac *= cxt->numFilters);
-    sum = apply_filter (cxt->filters [fi], source, cxt->numTaps);
-
-    if ((frac -= fi) == 0.0)
-        return sum;
-
-    return apply_filter (cxt->filters [fi + 1], source, cxt->numTaps) * frac + sum * (1.0 - frac);
+    return sum + apply_filter (cxt->filters [fi + 1], source, cxt->numTaps) * frac;
 }
 
 static double subsample (Resample *cxt, float *source, double offset)
