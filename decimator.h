@@ -16,6 +16,10 @@
 
 #include "biquad.h"
 
+#ifdef ENABLE_THREADS
+#include "workers.h"
+#endif
+
 #define DITHER_HIGHPASS     0x1
 #define DITHER_FLAT         0x2
 #define DITHER_LOWPASS      0x4
@@ -27,11 +31,25 @@
 #define SHAPING_ATH_CURVE   0x800
 #define SHAPING_ENABLED     (SHAPING_1ST_ORDER | SHAPING_2ND_ORDER | SHAPING_3RD_ORDER | SHAPING_ATH_CURVE)
 
+#define DECIMATE_MULTITHREADED  0x1000
+
 typedef struct {
     int numChannels, outputBits, outputBytes, dither_type, flags;
     float outputGain, *feedback;
     uint32_t *tpdf_generators;
     Biquad *noise_shapers;
+
+#ifdef ENABLE_THREADS
+    Workers *workers;
+    const float *input;
+    int numInputFrames;
+    unsigned char *output;
+    int stride, clips;
+
+    uint32_t tpdf_generator;
+    Biquad noise_shaper;
+    float feedback_val;
+#endif
 } Decimate;
 
 #ifdef __cplusplus

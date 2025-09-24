@@ -14,19 +14,33 @@
 #include <stdio.h>
 #include <math.h>
 
+#ifdef ENABLE_THREADS
+#include "workers.h"
+#endif
+
 #define SUBSAMPLE_INTERPOLATE   0x1
 #define BLACKMAN_HARRIS         0x2
 #define INCLUDE_LOWPASS         0x4
+#define RESAMPLE_MULTITHREADED  0x8
+
+typedef struct {
+    unsigned int input_used, output_generated;
+} ResampleResult;
 
 typedef struct {
     int numChannels, numSamples, numFilters, numTaps, inputIndex, flags;
     double *tempFilter, outputOffset;
     float **buffers, **filters;
-} Resample;
 
-typedef struct {
-    unsigned int input_used, output_generated;
-} ResampleResult;
+#ifdef ENABLE_THREADS
+    Workers *workers;
+    const float *input;
+    float *cbuffer, *output;
+    int numInputFrames, numOutputFrames, stride;
+    ResampleResult res;
+    double ratio;
+#endif
+} Resample;
 
 #ifdef __cplusplus
 extern "C" {

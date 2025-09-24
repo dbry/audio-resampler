@@ -50,6 +50,9 @@ static const char *usage =
 "           -a          = allpass sinc (no lowpass, even downsampling)\n"
 "           -b          = Blackman-Harris windowing (best stopband)\n"
 "           -h          = Hann windowing (fastest transition)\n"
+#ifdef ENABLE_THREADS
+"           -m          = use multithreading on stereo & multichannel files\n"
+#endif
 "           -p          = pre/post filtering (cascaded biquads)\n"
 "           -q          = quiet mode (display errors only)\n"
 "           -v          = verbose (display lots of info)\n"
@@ -67,7 +70,7 @@ static const char *usage =
 
 static int wav_process (char *infilename, char *outfilename);
 
-static int bh4_window, hann_window, num_taps = 256, num_filters = 256, outbits, verbosity, pre_post_filter, allpass;
+static int bh4_window, hann_window, num_taps = 256, num_filters = 256, outbits, verbosity, pre_post_filter, allpass, enable_threads;
 static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE;
 static double pitch_ratio = 1.0, tempo_ratio = 1.0;
 static unsigned long resample_rate, lowpass_freq;
@@ -153,6 +156,10 @@ int main (int argc, char **argv)
 
                     case 'A': case 'a':
                         allpass = 1;
+                        break;
+
+                    case 'M': case 'm':
+                        enable_threads = 1;
                         break;
 
                     case 'P': case 'p':
@@ -677,7 +684,7 @@ static int wav_process (char *infilename, char *outfilename)
     return res;
 }
 
-#define BUFFER_SAMPLES          4096
+#define BUFFER_SAMPLES          16384
 
 static unsigned long gcd (unsigned long a, unsigned long b);
 
@@ -803,6 +810,11 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         unsigned long factor = resample_rate / gcd (sample_rate, resample_rate);
         int flags = SUBSAMPLE_INTERPOLATE;
 
+#ifdef ENABLE_THREADS
+        if (enable_threads)
+            flags |= RESAMPLE_MULTITHREADED;
+#endif
+
         if (factor < num_filters && phase_shift == 0.0) {
             flags &= ~SUBSAMPLE_INTERPOLATE;
             num_filters = factor;
@@ -858,8 +870,16 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         }
     }
 
-    if (outbits != 32)
-        decimator = decimateInit (num_channels, outbits, (outbits + 7) / 8, 1.0, resample_rate, dither | noise_shaping);
+    if (outbits != 32) {
+        int decimate_flags = dither | noise_shaping;
+
+#ifdef ENABLE_THREADS
+        if (enable_threads)
+            decimate_flags |= DECIMATE_MULTITHREADED;
+#endif
+
+        decimator = decimateInit (num_channels, outbits, (outbits + 7) / 8, 1.0, resample_rate, decimate_flags);
+    }
 
     if (inbits != 32 || outbits != 32) {
         int max_samples = BUFFER_SAMPLES, max_bytes = 2;

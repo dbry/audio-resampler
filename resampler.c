@@ -48,6 +48,9 @@ static double subsample (Resample *cxt, float *source, double offset);
 //                                - lowpassRatio specifies frequency as a ratio to input samples
 //                                - required for downsampling, optional otherwise
 //
+//   RESAMPLE_MULTITHREADED:    use multiple threads for processing multiple channels in parallel
+//                                - optional (define ENABLE_THREADS)
+//
 // Notes:
 //
 // 1. The same resampling instance can be used for upsampling, downsampling, or simple (near-unity)
@@ -126,6 +129,11 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
     cxt->outputOffset = numTaps / 2;
     cxt->inputIndex = numTaps;
 
+#ifdef ENABLE_THREADS
+    if (numChannels > 1 && (flags & RESAMPLE_MULTITHREADED))
+        cxt->workers = workersInit (numChannels);
+#endif
+
     return cxt;
 }
 
@@ -156,8 +164,58 @@ void resampleReset (Resample *cxt)
 // different channels are passed in as an array of float pointers. There is also an
 // "interleaved" version (see below).
 
+#ifdef ENABLE_THREADS
+static int resampleProcessChannelJob (void *ptr, void *sync_not_used);
+#endif
+
 ResampleResult resampleProcess (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio)
 {
+#ifdef ENABLE_THREADS
+    if (cxt->workers) {
+        Resample *worker_contexts = calloc (cxt->numChannels, sizeof (Resample));
+        ResampleResult res = { 0, 0 };
+        int ch;
+
+        for (ch = 0; ch < cxt->numChannels; ++ch) {
+            Resample *wcxt = worker_contexts + ch;
+
+            *wcxt = *cxt;
+            wcxt->input = input [ch] - 1;
+            wcxt->numInputFrames = numInputFrames;
+            wcxt->output = output [ch] - 1;
+            wcxt->numOutputFrames = numOutputFrames;
+            wcxt->cbuffer = cxt->buffers [ch];
+            wcxt->ratio = ratio;
+            wcxt->stride = 1;
+            wcxt->res = res;
+
+            workersEnqueueJob (cxt->workers, resampleProcessChannelJob, wcxt,
+                ch < cxt->numChannels - 1 ? WaitForAvailableWorkerThread : DontUseWorkerThread);
+        }
+
+        workersWaitAllJobs (cxt->workers);
+        res = worker_contexts [0].res;
+        *cxt = worker_contexts [0];
+        free (worker_contexts);
+
+        return res;
+    }
+    else if (cxt->numChannels == 1) {
+        cxt->input = input [0] - 1;
+        cxt->numInputFrames = numInputFrames;
+        cxt->output = output [0] - 1;
+        cxt->numOutputFrames = numOutputFrames;
+        cxt->cbuffer = cxt->buffers [0];
+        cxt->ratio = ratio;
+        cxt->stride = 1;
+        cxt->res.output_generated = 0;
+        cxt->res.input_used = 0;
+
+        resampleProcessChannelJob (cxt, NULL);
+        return cxt->res;
+    }
+    else {
+#endif
     int half_taps = cxt->numTaps / 2, i;
     ResampleResult res = { 0, 0 };
     double offset2 = 0.0;
@@ -194,6 +252,9 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
 
     cxt->outputOffset += offset2;
     return res;
+#ifdef ENABLE_THREADS
+    }
+#endif
 }
 
 // This is the "interleaved" version of the resampler where the audio samples for different
@@ -202,6 +263,52 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
 
 ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
 {
+#ifdef ENABLE_THREADS
+    if (cxt->workers) {
+        Resample *worker_contexts = calloc (cxt->numChannels, sizeof (Resample));
+        ResampleResult res = { 0, 0 };
+        int ch;
+
+        for (ch = 0; ch < cxt->numChannels; ++ch) {
+            Resample *wcxt = worker_contexts + ch;
+
+            *wcxt = *cxt;
+            wcxt->input = input + ch - cxt->numChannels;
+            wcxt->numInputFrames = numInputFrames;
+            wcxt->output = output + ch - cxt->numChannels;
+            wcxt->numOutputFrames = numOutputFrames;
+            wcxt->cbuffer = cxt->buffers [ch];
+            wcxt->stride = cxt->numChannels;
+            wcxt->ratio = ratio;
+            wcxt->res = res;
+
+            workersEnqueueJob (cxt->workers, resampleProcessChannelJob, wcxt,
+                ch < cxt->numChannels - 1 ? WaitForAvailableWorkerThread : DontUseWorkerThread);
+        }
+
+        workersWaitAllJobs (cxt->workers);
+        res = worker_contexts [0].res;
+        *cxt = worker_contexts [0];
+        free (worker_contexts);
+
+        return res;
+    }
+    else if (cxt->numChannels == 1) {
+        cxt->input = input - 1;
+        cxt->numInputFrames = numInputFrames;
+        cxt->output = output - 1;
+        cxt->numOutputFrames = numOutputFrames;
+        cxt->cbuffer = cxt->buffers [0];
+        cxt->ratio = ratio;
+        cxt->stride = 1;
+        cxt->res.output_generated = 0;
+        cxt->res.input_used = 0;
+
+        resampleProcessChannelJob (cxt, NULL);
+        return cxt->res;
+    }
+    else {
+#endif
     int half_taps = cxt->numTaps / 2, i;
     ResampleResult res = { 0, 0 };
     double offset2 = 0.0;
@@ -238,7 +345,51 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, in
 
     cxt->outputOffset += offset2;
     return res;
+#ifdef ENABLE_THREADS
+    }
+#endif
 }
+
+#ifdef ENABLE_THREADS
+
+// This is the resampler processing function to process a single channel. It can be called directly or called from
+// a worker thread (see workers.c) and is used and is used for both interleaved and non-interleaved channels (see
+// "stride" argument in the context).
+
+static int resampleProcessChannelJob (void *ptr, void *sync_not_used)
+{
+    Resample *cxt = ptr;
+    int half_taps = cxt->numTaps / 2;
+    double offset2 = 0.0;
+
+    while (cxt->numOutputFrames > 0) {
+        if (cxt->outputOffset + offset2 >= cxt->inputIndex - half_taps) {
+            if (cxt->numInputFrames > 0) {
+                if (cxt->inputIndex == cxt->numSamples) {
+                    memmove (cxt->cbuffer, cxt->cbuffer + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (float));
+                    cxt->outputOffset -= cxt->numSamples - cxt->numTaps;
+                    cxt->inputIndex -= cxt->numSamples - cxt->numTaps;
+                }
+
+                cxt->cbuffer [cxt->inputIndex++] = *(cxt->input += cxt->stride);
+                cxt->res.input_used++;
+                cxt->numInputFrames--;
+            }
+            else
+                break;
+        }
+        else {
+            *(cxt->output += cxt->stride) = subsample (cxt, cxt->cbuffer, cxt->outputOffset + offset2);
+            offset2 = ++(cxt->res.output_generated) / cxt->ratio;
+            cxt->numOutputFrames--;
+        }
+    }
+
+    cxt->outputOffset += offset2;
+    return 0;
+}
+
+#endif
 
 // These two functions are not required for any application, but might be useful. Essentially
 // they allow a "dry run" of the resampler to determine beforehand how many input samples
@@ -371,6 +522,12 @@ void resampleFree (Resample *cxt)
             free (cxt->buffers [i]);
 
         free (cxt->buffers);
+
+#ifdef ENABLE_THREADS
+        if (cxt->workers)
+            workersDeinit (cxt->workers);
+#endif
+
         free (cxt);
     }
 }

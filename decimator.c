@@ -88,6 +88,11 @@ Decimate *decimateInit (int numChannels, int outputBits, int outputBytes, float 
         }
     }
 
+#ifdef ENABLE_THREADS
+    if (numChannels > 1 && (flags & DECIMATE_MULTITHREADED))
+        cxt->workers = workersInit (numChannels - 1);
+#endif
+
     return cxt;
 }
 
@@ -98,10 +103,52 @@ Decimate *decimateInit (int numChannels, int outputBits, int outputBytes, float 
 // output using an array of unsigned character pointers, one for each channel. There is also
 // an "interleaved" version (see below).
 
+#ifdef ENABLE_THREADS
+static int decimateProcessSingleChanLE (void *ptr, void *sync_not_used);
+#endif
+
 static inline double tpdf_dither (uint32_t *generator, int type);
 
 int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFrames, unsigned char *const *output)
 {
+#ifdef ENABLE_THREADS
+    if (cxt->workers) {
+        Decimate *worker_contexts = calloc (cxt->numChannels, sizeof (Decimate));
+        int clipped_samples = 0, ch;
+
+        for (ch = 0; ch < cxt->numChannels; ++ch) {
+            Decimate *wcxt = worker_contexts + ch;
+
+            *wcxt = *cxt;
+            wcxt->input = input [ch] - 1;
+            wcxt->numInputFrames = numInputFrames;
+            wcxt->output = output [ch];
+            wcxt->stride = 1;
+            wcxt->clips = 0;
+            wcxt->feedback_val = cxt->feedback [ch];
+            wcxt->tpdf_generator = cxt->tpdf_generators [ch];
+            memcpy (&wcxt->noise_shaper, cxt->noise_shapers + ch, sizeof (Biquad));
+
+            workersEnqueueJob (cxt->workers, decimateProcessSingleChanLE, wcxt,
+                ch < cxt->numChannels - 1 ? WaitForAvailableWorkerThread : DontUseWorkerThread);
+        }
+
+        workersWaitAllJobs (cxt->workers);
+
+        for (ch = 0; ch < cxt->numChannels; ++ch) {
+            Decimate *wcxt = worker_contexts + ch;
+
+            cxt->feedback [ch] = wcxt->feedback_val;
+            cxt->tpdf_generators [ch] = wcxt->tpdf_generator;
+            memcpy (cxt->noise_shapers + ch, &wcxt->noise_shaper, sizeof (Biquad));
+            clipped_samples += wcxt->clips;
+        }
+
+        free (worker_contexts);
+        return clipped_samples;
+    }
+    else {
+#endif
     float scaler = (1 << cxt->outputBits) / 2.0 * cxt->outputGain, codevalue;
     int pre_zeros = cxt->outputBytes - ((cxt->outputBits + 7) / 8);
     int32_t offset = (cxt->outputBits <= 8) * 128;
@@ -145,6 +192,10 @@ int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFra
         }
 
     return clipped_samples;
+
+#ifdef ENABLE_THREADS
+    }
+#endif
 }
 
 // This is the "interleaved" version of the decimator where the audio samples for different
@@ -153,6 +204,44 @@ int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFra
 
 int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInputFrames, unsigned char *output)
 {
+#ifdef ENABLE_THREADS
+    if (cxt->workers) {
+        Decimate *worker_contexts = calloc (cxt->numChannels, sizeof (Decimate));
+        int clipped_samples = 0, ch;
+
+        for (ch = 0; ch < cxt->numChannels; ++ch) {
+            Decimate *wcxt = worker_contexts + ch;
+
+            *wcxt = *cxt;
+            wcxt->input = input + ch - cxt->numChannels;
+            wcxt->numInputFrames = numInputFrames;
+            wcxt->output = output + (ch * cxt->outputBytes);
+            wcxt->stride = cxt->numChannels;
+            wcxt->clips = 0;
+            wcxt->tpdf_generator = cxt->tpdf_generators [ch];
+            wcxt->feedback_val = cxt->feedback [ch];
+            memcpy (&wcxt->noise_shaper, cxt->noise_shapers + ch, sizeof (Biquad));
+
+            workersEnqueueJob (cxt->workers, decimateProcessSingleChanLE, wcxt,
+                ch < cxt->numChannels - 1 ? WaitForAvailableWorkerThread : DontUseWorkerThread);
+        }
+
+        workersWaitAllJobs (cxt->workers);
+
+        for (ch = 0; ch < cxt->numChannels; ++ch) {
+            Decimate *wcxt = worker_contexts + ch;
+
+            cxt->tpdf_generators [ch] = wcxt->tpdf_generator;
+            cxt->feedback [ch] = wcxt->feedback_val;
+            memcpy (cxt->noise_shapers + ch, &wcxt->noise_shaper, sizeof (Biquad));
+            clipped_samples += wcxt->clips;
+        }
+
+        free (worker_contexts);
+        return clipped_samples;
+    }
+    else {
+#endif
     float scaler = (1 << cxt->outputBits) / 2.0 * cxt->outputGain, codevalue;
     int pre_zeros = cxt->outputBytes - ((cxt->outputBits + 7) / 8);
     int32_t offset = (cxt->outputBits <= 8) * 128;
@@ -195,7 +284,64 @@ int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInpu
         }
 
     return clipped_samples;
+
+#ifdef ENABLE_THREADS
+    }
+#endif
 }
+
+#ifdef ENABLE_THREADS
+
+static int decimateProcessSingleChanLE (void *ptr, void *sync_not_used)
+{
+    Decimate *cxt = ptr;
+    float scaler = (1 << cxt->outputBits) / 2.0 * cxt->outputGain, codevalue;
+    int pre_zeros = cxt->outputBytes - ((cxt->outputBits + 7) / 8);
+    int stride_bytes = (cxt->stride - 1) * cxt->outputBytes;
+    int32_t offset = (cxt->outputBits <= 8) * 128;
+    int32_t highclip = (1 << (cxt->outputBits - 1)) - 1;
+    int32_t lowclip = ~highclip;
+    int leftshift = (24 - cxt->outputBits) % 8;
+    int i, j;
+
+    for (i = 0; i < cxt->numInputFrames; ++i) {
+        float dither_value = (cxt->flags & DITHER_ENABLED) ? tpdf_dither (&cxt->tpdf_generator, cxt->dither_type) : 0.0;
+        int32_t outvalue;
+
+        for (j = 0; j < pre_zeros; ++j)
+            *cxt->output++ = 0;
+
+        codevalue = (*(cxt->input += cxt->stride) * scaler) - cxt->feedback_val;
+        outvalue = floor (codevalue + dither_value + 0.5);
+
+        if (cxt->flags & SHAPING_ENABLED)
+            cxt->feedback_val = biquad_apply_sample (&cxt->noise_shaper, outvalue - codevalue);
+
+        if (outvalue > highclip) {
+            outvalue = highclip;
+            cxt->clips++;
+        }
+        else if (outvalue < lowclip) {
+            outvalue = lowclip;
+            cxt->clips++;
+        }
+
+        *cxt->output++ = outvalue = ((uint32_t) outvalue << leftshift) + offset;
+
+        if (cxt->outputBits > 8) {
+            *cxt->output++ = outvalue >> 8;
+
+            if (cxt->outputBits > 16)
+                *cxt->output++ = outvalue >> 16;
+        }
+
+        cxt->output += stride_bytes;
+    }
+
+    return 0;
+}
+
+#endif
 
 // Free all resources associated with the decimator context, including the context pointer
 // itself. Do not use the context after this call.
@@ -206,6 +352,12 @@ void decimateFree (Decimate *cxt)
         free (cxt->tpdf_generators);
         free (cxt->noise_shapers);
         free (cxt->feedback);
+
+#ifdef ENABLE_THREADS
+        if (cxt->workers)
+            workersDeinit (cxt->workers);
+#endif
+
         free (cxt);
     }
 }
