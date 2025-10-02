@@ -251,10 +251,14 @@ Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, 
         return NULL;
     }
 
-    if (factor < maxFilters) {
+    // if we can use the exact number of filters for interpolation-free resampling without exceeding the specified limit, do it
+
+    if (factor <= maxFilters) {
         flags &= ~SUBSAMPLE_INTERPOLATE;
         maxFilters = factor;
     }
+
+    // this is where we calculate an optimized lowpass ratio for the specified rates and filter length
 
     if (!lowpassFreq && (flags & INCLUDE_LOWPASS) && destinRate < sourceRate) {
         lowpassRatio = 1.0 - (1024.0 / numTaps) / (200.0 * resampleRatio);
@@ -274,7 +278,7 @@ Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, 
     return cxt;
 }
 
-// Several functions to query the configuration of the resampler follow. These were not previously
+// Here are several functions to query the configuration of the resampler. These were not previously
 // required because the configuration was fully specfied by the initialization call, but with the new
 // fixed-ratio initialization some configuration is indeterminate.
 
