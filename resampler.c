@@ -10,13 +10,26 @@
 
 #include "resampler.h"
 
-static void init_filter (Resample *cxt, float *filter, double fraction, double lowpass_ratio);
+static void init_filter (Resample *cxt, float *filter, double fraction);
 static double subsample (Resample *cxt, float *source, double offset);
+static unsigned long gcd (unsigned long a, unsigned long b);
+
+// There are now two functions to initialize a resampler context. The legacy version is for
+// arbitrary resampling operations with no fixed ratio (i.e., ASRCs), and its API is unchanged
+// from previous versions of the resampler. The resampler initially targeted this use case.
+//
+// A new version of the initialization function, resamplerFixedRatioInit(), is for fixed-ratio
+// sample rate conversions (i.e., conversions from one specific sample rate to another) with
+// no fractional phase shift. This version can provide significantly improved performance and
+// accuracy for such conversions. See the new function's description below.
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Initialize a resampler context with the specified characteristics. The returned context pointer
 // is used for all subsequent calls to the resampler (and should not be dereferenced). A NULL
 // return indicates an error. For the flags parameter, note that SUBSAMPLE_INTERPOLATE and
-// BLACKMAN_HARRIS are recommended for most applications. The parameters are:
+// BLACKMAN_HARRIS are recommended for most applications. This function assumes that the "ratio"
+// parameter will be appropriately specified for every call to the resampler. The parameters are:
 //
 // numChannels:     the number of audio channels present
 //
@@ -30,8 +43,10 @@ static double subsample (Resample *cxt, float *source, double offset);
 //                    - affects quality of interpolated filtering
 //                    - linearly affects memory usage of resampler
 //
-// lowpassRatio:    enable lowpass by specifying ratio < 1.0 (relative to input samples);
-//                   this is required for downsampling, optional otherwise
+// lowpassRatio:    enable lowpass by specifying the ratio relative to the Nyquist frequency of
+//                   the *input* samples (must be > 0.0 and < 1.0); required for quality
+//                   downsampling (except in special cases), but is optional otherwise
+//                   ex: lowpassRatio = lowpass freq in Hz / (source rate in Hz / 2.0)
 //
 // flags:           mask for optional feature configuration:
 //
@@ -44,11 +59,8 @@ static double subsample (Resample *cxt, float *source, double offset);
 //                                - if not specified, the default window is Hann (raised cosine)
 //                                  which has steeper cutoff but poorer stopband rejection
 //
-//   INCLUDE_LOWPASS:           include lowpass in sinc interpolation filters
-//                                - lowpassRatio specifies frequency as a ratio to input samples
-//                                - required for downsampling, optional otherwise
-//
 //   RESAMPLE_MULTITHREADED:    use multiple threads for processing multiple channels in parallel
+//                                - might be slower depending on CPU, optimization, caching, etc.
 //                                - optional (define ENABLE_THREADS)
 //
 // Notes:
@@ -58,7 +70,7 @@ static double subsample (Resample *cxt, float *source, double offset);
 //    behavior is controlled by the "ratio" parameter during the actual resample processing call.
 //    To prevent aliasing, it's important to specify a lowpassRatio if the resampler will be used
 //    for any significant degree of downsampling (ratio < 1.0), but the lowpass can also be used
-//    independently without any rate conversion (or even upsampling).
+//    independently without any rate conversion (or even when upsampling).
 //
 // 2. When the context is initialized (or reset) the sample histories are filled with silence such
 //    that the resampler is ready to generate output immediately. However, this also means that there
@@ -73,6 +85,9 @@ static double subsample (Resample *cxt, float *source, double offset);
 //    filters themselves and also for the sample history storage). On the other hand, the number
 //    of filters allocated primarily affects just the memory footprint (it has little affect on CPU
 //    load and so can be large on systems with lots of RAM).
+//
+//  4. For a fixed-ratio conversion (i.e., conversions from one specific sample rate to another) with
+//     no fractional phase shift, see resampleFixedRatioInit() below.
 
 Resample *resampleInit (int numChannels, int numTaps, int numFilters, double lowpassRatio, int flags)
 {
@@ -96,6 +111,7 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
         return NULL;
     }
 
+    cxt->lowpassRatio = lowpassRatio;
     cxt->numChannels = numChannels;
     cxt->numSamples = numTaps * 16;
     cxt->numFilters = numFilters;
@@ -113,7 +129,7 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
         cxt->filters [i] = calloc (cxt->numTaps, sizeof (float));
 
         if (i < cxt->numFilters)
-            init_filter (cxt, cxt->filters [i], (double) i / cxt->numFilters, lowpassRatio);
+            init_filter (cxt, cxt->filters [i], (double) i / cxt->numFilters);
         else
             // the last filter is essentially identical to the first (just offset one tap)
             for (j = 0; j < cxt->numTaps; ++j)
@@ -135,6 +151,149 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 #endif
 
     return cxt;
+}
+
+// Initialize a resampler context with the specified characteristics. The returned context
+// pointer is used for all subsequent calls to the resampler (and should not be dereferenced).
+// A NULL return indicates an error. For the flags parameter, note that SUBSAMPLE_INTERPOLATE,
+// BLACKMAN_HARRIS, and INCLUDE_LOWPASS are all recommended for most applications.
+//
+// This function will determine whether the specified fixed-ratio conversion operation is
+// possible with a reduced number of filters that can be used directly without interpolation
+// (i.e., every calculation exactly aligns to a single filter). If this is possible then
+// several advantages result. First, fewer filters are required which reduces the memory
+// footprint. Also, the performance is approximately doubled due to the elimination of the
+// interpolation step. And finally, the numerical accuracy of the resampling is improved,
+// also due to the lack of interpolation inaccuracies. Note that subsample phase shifts are
+// not allowed in this mode.
+//
+// If the number of filters cannot be reduced because the sample rates are not sufficiently
+// related for the max number of filters specified, then that specified maximum filter count
+// will be used with the specfied interpolation mode (recommended to be ON). If the number
+// filters is reduced, then the supplied interpolation mode flag is ignored.
+//
+// When using this version there is also the ability of the resampler to choose an optimum
+// lowpass cutoff frequency for downsampling operations only based on the sampling rates and
+// the number of filter taps. Simply set the INCLUDE_LOWPASS bit in the flags parameter and
+// set the lowpassFreq parameter to zero. This is generally recommended.
+//
+// numChannels:     the number of audio channels present
+//
+// numTaps:         the number of taps for each sinc interpolation filter
+//                    - must be a multiple of 4, from 4 - 1024 taps
+//                    - affects quality by controlling cutoff sharpness of filters
+//                    - linearly affects memory usage and CPU load of resampling
+//
+// maxFilters:      the maximum number of sinc filters allowed
+//                    - must be 1 - 1024, will be reduced if possible
+//                    - affects quality of interpolated filtering
+//                    - linearly affects memory usage of resampler
+//
+// sourceRate:      the fixed source and destination sample rates
+// destinRate:        - the "ratio" parameter to other resampling functions is ignored
+//
+// lowpassFreq:     enable lowpass by specifying a lowpass frequency here
+//                    - to have the library determine an appropriate lowpass frequency based
+//                      on the sample rates and filter length, leave this parameter zero and
+//                      set the INCLUDE_LOWPASS flag bit below
+//
+// flags:           mask for optional feature configuration:
+//
+//   SUBSAMPLE_INTERPOLATE:     interpolate values from adjacent filters
+//                                - recommended in case the reduced filter determination fails
+//                                - will be ignored if a reduced filter count is selected
+//                                - approximately doubles the CPU load (if used)
+//
+//   BLACKMAN_HARRIS:           use 4-term Blackman Harris window function
+//                                - generally recommended except in special situations
+//                                - if not specified, the default window is Hann (raised cosine)
+//                                  which has steeper cutoff but poorer stopband rejection
+//
+//   RESAMPLE_MULTITHREADED:    use multiple threads for processing multiple channels in parallel
+//                                - might be slower depending on CPU, optimization, caching, etc.
+//                                - optional (define ENABLE_THREADS)
+//
+//   INCLUDE_LOWPASS:           enable automatic calculation of appropriate lowpass frequency
+//                                - also set the lowpassFreq parameter (above) to zero
+//                                - calculation is based on sample rates and filter length
+//                                - no lowpass is used for upsampling or near-unity resampling,
+//                                  but can always be enabled by setting the lowpassFreq directly
+//
+// Notes:
+//
+// 1. The resampling instance created by this call can only be used to perform the specified
+//    conversion as the "ratio" parameter in the processing functions is ignored. Also subsample
+//    phase advances are not allowed.
+//
+// 2. When the context is initialized (or reset) the sample histories are filled with silence such
+//    that the resampler is ready to generate output immediately. However, this also means that there
+//    is an implicit signal delay equal to half the tap length of the sinc filters in samples. If
+//    zero delay is desired then that many samples can be ignored, or the resampleAdvancePosition()
+//    function can be used to bypass them. Also, at the end of processing an equal length of silence
+//    must be appended to the input audio to align the output with the actual input.
+//
+// 3. The number of taps per filter directly control the fidelity of the resampling. The filter length
+//    has an approximately linear affect on the the CPU load consumed by the resampler, and also on the
+//    memory requirement (both for the filters themselves and also for the sample history storage). It
+//    is assumed that this version of the resampler instance has exactly the optimum number of filters
+//    to eliminate the need for interpolation and provide the highest possible accuracy, but otherwise
+//    the maximum number of filters specified will be used.
+
+Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, int sourceRate, int destinRate, int lowpassFreq, int flags)
+{
+    unsigned long factor = destinRate / gcd (sourceRate, destinRate);
+    double resampleRatio = (double) destinRate / sourceRate;
+    double lowpassRatio = lowpassFreq * 2.0 / destinRate;
+    Resample *cxt;
+
+    if (lowpassFreq > destinRate / 2.0) {
+        fprintf (stderr, "lowpass frequency must be lower than destination Nyquist!\n");
+        return NULL;
+    }
+
+    if (factor < maxFilters) {
+        flags &= ~SUBSAMPLE_INTERPOLATE;
+        maxFilters = factor;
+    }
+
+    if (!lowpassFreq && (flags & INCLUDE_LOWPASS) && destinRate < sourceRate) {
+        lowpassRatio = 1.0 - (1024.0 / numTaps) / (200.0 * resampleRatio);
+
+        if (lowpassRatio < 0.8)
+            lowpassRatio = 0.8;
+
+        if (lowpassRatio < resampleRatio)
+            lowpassRatio = resampleRatio;
+    }
+
+    cxt = resampleInit (numChannels, numTaps, maxFilters, lowpassRatio * resampleRatio, flags | RESAMPLE_FIXED_RATIO);
+
+    if (cxt)
+        cxt->fixedRatio = (double) destinRate / sourceRate;
+
+    return cxt;
+}
+
+// Several functions to query the configuration of the resampler follow. These were not previously
+// required because the configuration was fully specfied by the initialization call, but with the new
+// fixed-ratio initialization some configuration is indeterminate.
+
+// Note that lowpass ratio is relative to the Nyquist frequency of the *source* sample rate
+// with 1.0 indicating no lowpass configured.
+
+double resampleLowpassRatio (Resample *cxt)
+{
+    return cxt->lowpassRatio;
+}
+
+int resampleGetNumFilters (Resample *cxt)
+{
+    return cxt->numFilters;
+}
+
+int resampleInterpolationUsed (Resample *cxt)
+{
+    return cxt->flags & SUBSAMPLE_INTERPOLATE;
 }
 
 // Reset a resampler context to its initialized state. Specifically, any history is discarded
@@ -161,8 +320,11 @@ void resampleReset (Resample *cxt)
 // (there is no other limit).
 //
 // This is the "non-interleaved" version of the resampler where the audio sample buffers for
-// different channels are passed in as an array of float pointers. There is also an
-// "interleaved" version (see below).
+// different channels are passed in as an array of float pointers. There is also an "interleaved"
+// version (see below).
+//
+// If this resampler was created with the resampleFixedRatioInit() function, then the "ratio"
+// parameter is ignored and the originally specified conversion is performed.
 
 #ifdef ENABLE_THREADS
 static int resampleProcessChannelJob (void *ptr, void *sync_not_used);
@@ -170,6 +332,9 @@ static int resampleProcessChannelJob (void *ptr, void *sync_not_used);
 
 ResampleResult resampleProcess (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio)
 {
+    if (cxt->flags & RESAMPLE_FIXED_RATIO)
+        ratio = cxt->fixedRatio;
+
 #ifdef ENABLE_THREADS
     if (cxt->workers) {
         Resample *worker_contexts = calloc (cxt->numChannels, sizeof (Resample));
@@ -260,9 +425,15 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
 // This is the "interleaved" version of the resampler where the audio samples for different
 // channels are passed in sequence in a single buffer. There is also a "non-interleaved"
 // version for independent buffers, which is otherwise identical (see above).
+//
+// If this resampler was created with the resampleFixedRatioInit() function, then the "ratio"
+// parameter is ignored and the originally specified conversion is performed.
 
 ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
 {
+    if (cxt->flags & RESAMPLE_FIXED_RATIO)
+        ratio = cxt->fixedRatio;
+
 #ifdef ENABLE_THREADS
     if (cxt->workers) {
         Resample *worker_contexts = calloc (cxt->numChannels, sizeof (Resample));
@@ -402,6 +573,9 @@ static int resampleProcessChannelJob (void *ptr, void *sync_not_used)
 // an extra sample might be generated). Therefore it is important to restrict the output with
 // numOutputFrames if an exact output count is desired (don't just assume the input count can
 // exactly determine the output count).
+//
+// If this resampler was created with the resampleFixedRatioInit() function, then the "ratio"
+// parameter is ignored and the originally specified conversion is simulated.
 
 unsigned int resampleGetRequiredSamples (Resample *cxt, int numOutputFrames, double ratio)
 {
@@ -409,6 +583,9 @@ unsigned int resampleGetRequiredSamples (Resample *cxt, int numOutputFrames, dou
     int input_index = cxt->inputIndex;
     double offset = cxt->outputOffset;
     ResampleResult res = { 0, 0 };
+
+    if (cxt->flags & RESAMPLE_FIXED_RATIO)
+        ratio = cxt->fixedRatio;
 
     while (numOutputFrames > 0) {
         if (offset >= input_index - half_taps) {
@@ -436,6 +613,9 @@ unsigned int resampleGetExpectedOutput (Resample *cxt, int numInputFrames, doubl
     double offset = cxt->outputOffset;
     ResampleResult res = { 0, 0 };
 
+    if (cxt->flags & RESAMPLE_FIXED_RATIO)
+        ratio = cxt->fixedRatio;
+
     while (1) {
         if (offset >= input_index - half_taps) {
             if (numInputFrames > 0) {
@@ -462,12 +642,15 @@ unsigned int resampleGetExpectedOutput (Resample *cxt, int numInputFrames, doubl
 // Advance the resampler output without generating any output, with the units referenced
 // to the input sample array. This can be used to temporally align the output to the input
 // (by specifying half the sinc filter tap width), and it can also be used to introduce a
-// phase shift. The resampler cannot be reversed.
+// phase shift. The resampler cannot be reversed. If this resampler was created with the
+// resampleFixedRatioInit() function, then the "delta" must be an integer (no subsampling).
 
 void resampleAdvancePosition (Resample *cxt, double delta)
 {
     if (delta < 0.0)
         fprintf (stderr, "resampleAdvancePosition() can only advance forward!\n");
+    else if ((cxt->flags & RESAMPLE_FIXED_RATIO) && floor (delta) != delta)
+        fprintf (stderr, "resampleAdvancePosition() cannot advance partial samples in fixed-ratio mode!\n");
     else
         cxt->outputOffset += delta;
 }
@@ -532,6 +715,19 @@ void resampleFree (Resample *cxt)
     }
 }
 
+// greatest common divisor
+
+static unsigned long gcd (unsigned long a, unsigned long b)
+{
+    while (b) {
+        unsigned long t = (a %= b);
+        a = b;
+        b = t;
+    }
+
+    return a;
+}
+
 // This is the basic convolution operation that is the core of the resampler and utilizes the
 // bulk of the CPU load (assuming reasonably long filters). The first version is the canonical
 // form for reference, followed by two variations that are more accurate and incorporate various
@@ -588,7 +784,7 @@ static double apply_filter(float* A, float* B, int num_taps)
 #define M_PI 3.14159265358979324
 #endif
 
-static void init_filter (Resample *cxt, float *filter, double fraction, double lowpass_ratio)
+static void init_filter (Resample *cxt, float *filter, double fraction)
 {
     double filter_sum = 0.0, scaler, error;
     const double a0 = 0.35875;
@@ -609,7 +805,7 @@ static void init_filter (Resample *cxt, float *filter, double fraction, double l
         double value;
 
         if (dist != 0.0) {
-            value = sin (dist * lowpass_ratio) / (dist * lowpass_ratio);
+            value = sin (dist * cxt->lowpassRatio) / (dist * cxt->lowpassRatio);
 
             if (cxt->flags & BLACKMAN_HARRIS)
                 value *= a0 + a1 * cos (ratio) + a2 * cos (2 * ratio) + a3 * cos (3 * ratio);
