@@ -285,7 +285,7 @@ Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, 
 // Note that lowpass ratio is relative to the Nyquist frequency of the *source* sample rate
 // with 1.0 indicating no lowpass configured.
 
-double resampleLowpassRatio (Resample *cxt)
+double resampleGetLowpassRatio (Resample *cxt)
 {
     return cxt->lowpassRatio;
 }

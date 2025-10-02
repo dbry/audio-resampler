@@ -54,8 +54,8 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, in
 unsigned int resampleGetRequiredSamples (Resample *cxt, int numOutputFrames, double ratio);
 unsigned int resampleGetExpectedOutput (Resample *cxt, int numInputFrames, double ratio);
 void resampleAdvancePosition (Resample *cxt, double delta);
+double resampleGetLowpassRatio (Resample *cxt);
 double resampleGetPosition (Resample *cxt);
-double resampleLowpassRatio (Resample *cxt);
 int resampleGetNumFilters (Resample *cxt);
 int resampleInterpolationUsed (Resample *cxt);
 void resampleReset (Resample *cxt);
