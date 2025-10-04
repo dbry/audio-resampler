@@ -22,7 +22,8 @@
 #define BLACKMAN_HARRIS         0x2
 #define INCLUDE_LOWPASS         0x4
 #define RESAMPLE_MULTITHREADED  0x8
-#define RESAMPLE_FIXED_RATIO    0x10
+#define NO_FILTER_REDUCTION     0x10
+#define RESAMPLE_FIXED_RATIO    0x20    // internal use only, do not set
 
 typedef struct {
     unsigned int input_used, output_generated;

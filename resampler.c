@@ -165,7 +165,8 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 // footprint. Also, the performance is approximately doubled due to the elimination of the
 // interpolation step. And finally, the numerical accuracy of the resampling is improved,
 // also due to the lack of interpolation inaccuracies. Note that subsample phase shifts are
-// not allowed in this mode.
+// not allowed in this mode, so if these are required set the NO_FILTER_REDUCTION bit in
+// the flags to prevent this optimization.
 //
 // If the number of filters cannot be reduced because the sample rates are not sufficiently
 // related for the max number of filters specified, then that specified maximum filter count
@@ -175,7 +176,8 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 // When using this version there is also the ability of the resampler to choose an optimum
 // lowpass cutoff frequency for downsampling operations only based on the sampling rates and
 // the number of filter taps. Simply set the INCLUDE_LOWPASS bit in the flags parameter and
-// set the lowpassFreq parameter to zero. This is generally recommended.
+// set the lowpassFreq parameter to zero. This is generally recommended because it does not
+// introduce a lowpass for upsampling.
 //
 // numChannels:     the number of audio channels present
 //
@@ -203,6 +205,12 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 //                                - recommended in case the reduced filter determination fails
 //                                - will be ignored if a reduced filter count is selected
 //                                - approximately doubles the CPU load (if used)
+//
+//   NO_FILTER_REDUCTION:       don't allow the automatic reduction of filter count optimization
+//                                - this prevents the resampler from attempting to reduce the
+//                                  number of filters, which includes disabling interpolation
+//                                - only necessary if subsample phase-shifts are required, which
+//                                  is not a normal use case for fixed-ratio resampling
 //
 //   BLACKMAN_HARRIS:           use 4-term Blackman Harris window function
 //                                - generally recommended except in special situations
@@ -253,7 +261,7 @@ Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, 
 
     // if we can use the exact number of filters for interpolation-free resampling without exceeding the specified limit, do it
 
-    if (factor <= maxFilters) {
+    if (factor <= maxFilters && !(flags & NO_FILTER_REDUCTION)) {
         flags &= ~SUBSAMPLE_INTERPOLATE;
         maxFilters = factor;
     }
@@ -646,15 +654,16 @@ unsigned int resampleGetExpectedOutput (Resample *cxt, int numInputFrames, doubl
 // Advance the resampler output without generating any output, with the units referenced
 // to the input sample array. This can be used to temporally align the output to the input
 // (by specifying half the sinc filter tap width), and it can also be used to introduce a
-// phase shift. The resampler cannot be reversed. If this resampler was created with the
-// resampleFixedRatioInit() function, then the "delta" must be an integer (no subsampling).
+// phase shift. The resampler cannot be reversed. Although not strictly true, for the purpose
+// of this function we will not allow subsampling (non-integer advance) without interpolation
+// being enabled.
 
 void resampleAdvancePosition (Resample *cxt, double delta)
 {
     if (delta < 0.0)
         fprintf (stderr, "resampleAdvancePosition() can only advance forward!\n");
-    else if ((cxt->flags & RESAMPLE_FIXED_RATIO) && floor (delta) != delta)
-        fprintf (stderr, "resampleAdvancePosition() cannot advance partial samples in fixed-ratio mode!\n");
+    else if (!(cxt->flags & SUBSAMPLE_INTERPOLATE) && floor (delta) != delta)
+        fprintf (stderr, "resampleAdvancePosition() cannot advance partial samples without interpolation!\n");
     else
         cxt->outputOffset += delta;
 }
