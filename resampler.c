@@ -247,11 +247,10 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 //    to eliminate the need for interpolation and provide the highest possible accuracy, but otherwise
 //    the maximum number of filters specified will be used.
 
-Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, int sourceRate, int destinRate, int lowpassFreq, int flags)
+Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, double sourceRate, double destinRate, int lowpassFreq, int flags)
 {
-    unsigned long factor = destinRate / gcd (sourceRate, destinRate);
-    double resampleRatio = (double) destinRate / sourceRate;
-    double lowpassRatio = lowpassFreq * 2.0 / destinRate;
+    double lowpassRatio = lowpassFreq / (destinRate / 2.0);
+    double resampleRatio = destinRate / sourceRate;
     Resample *cxt;
 
     if (lowpassFreq > destinRate / 2.0) {
@@ -261,9 +260,13 @@ Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, 
 
     // if we can use the exact number of filters for interpolation-free resampling without exceeding the specified limit, do it
 
-    if (factor <= maxFilters && !(flags & NO_FILTER_REDUCTION)) {
-        flags &= ~SUBSAMPLE_INTERPOLATE;
-        maxFilters = factor;
+    if (sourceRate == floor (sourceRate) && destinRate == floor (destinRate) && !(flags & NO_FILTER_REDUCTION)) {
+        unsigned long factor = (unsigned long) destinRate / gcd ((unsigned long) sourceRate, (unsigned long) destinRate);
+
+        if (factor <= maxFilters) {
+            flags &= ~SUBSAMPLE_INTERPOLATE;
+            maxFilters = factor;
+        }
     }
 
     // this is where we calculate an optimized lowpass ratio for the specified rates and filter length
@@ -281,7 +284,7 @@ Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, 
     cxt = resampleInit (numChannels, numTaps, maxFilters, lowpassRatio * resampleRatio, flags | RESAMPLE_FIXED_RATIO);
 
     if (cxt)
-        cxt->fixedRatio = (double) destinRate / sourceRate;
+        cxt->fixedRatio = destinRate / sourceRate;
 
     return cxt;
 }
