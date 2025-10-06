@@ -70,7 +70,7 @@ static const char *usage =
 
 static int wav_process (char *infilename, char *outfilename);
 
-static int bh4_window, hann_window, num_taps = 256, num_filters = 256, outbits, verbosity, pre_post_filter, allpass, enable_threads;
+static int bh4_window, hann_window, num_taps = 256, num_filters = 320, outbits, verbosity, pre_post_filter, allpass, enable_threads;
 static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE;
 static double pitch_ratio = 1.0, tempo_ratio = 1.0;
 static unsigned long resample_rate, lowpass_freq;
@@ -147,7 +147,8 @@ int main (int argc, char **argv)
 			break;
 
 		    case '3':
-			num_filters = num_taps = 256;
+			num_filters = 320;      // hack to allow optimized 44.1k --> 96k at default quality
+			num_taps = 256;
 			break;
 
 		    case '4':
@@ -328,6 +329,11 @@ int main (int argc, char **argv)
             fprintf (stderr, "\nextra unknown argument: %s !\n", *argv);
             return 1;
         }
+    }
+
+    if (lowpass_freq && allpass) {
+        fprintf (stderr, "error: can't specify BOTH the allpass option and a lowpass frequency!\n");
+        return 1;
     }
 
     if (duration.value_is_valid && tempo_ratio != 1.0) {
@@ -686,14 +692,12 @@ static int wav_process (char *infilename, char *outfilename)
 
 #define BUFFER_SAMPLES          16384
 
-static unsigned long gcd (unsigned long a, unsigned long b);
-
 static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sample_rate,
     unsigned long num_samples, int num_channels, int inbits)
 {
     unsigned long remaining_samples = num_samples, output_samples = 0, clipped_samples = 0, target_output_samples;
     float *inbuffer = malloc (BUFFER_SAMPLES * num_channels * sizeof (float)), *stretch_buffer = NULL, *outbuffer;
-    double sample_ratio = (double) resample_rate / sample_rate, lowpass_ratio = 1.0, stretch_ratio = 1.0;
+    double sample_ratio = (double) resample_rate / sample_rate, stretch_ratio = 1.0;
     int upper_frequency = 350, lower_frequency = 50, pre_filter = 0, post_filter = 0;
     Biquad *lowpass1 = NULL, *lowpass2 = NULL;
     uint32_t progress_divider = 0, percent;
@@ -770,92 +774,60 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     outbuffer = malloc (outbuffer_samples * num_channels * sizeof (float));
     target_output_samples = (unsigned long) floor ((double) num_samples * stretch_ratio * sample_ratio + 0.5);
 
-    // when downsampling, calculate the optimum lowpass based on resample filter
-    // length (i.e., more taps allow us to lowpass closer to Nyquist)
-
-    if (sample_ratio < 1.0) {
-        lowpass_ratio -= (10.24 / num_taps);
-
-        if (lowpass_ratio < 0.84)           // limit the lowpass for very short filters
-            lowpass_ratio = 0.84;
-
-        if (lowpass_ratio < sample_ratio)   // avoid discontinuities near unity sample ratios
-            lowpass_ratio = sample_ratio;
-    }
-
-    if (lowpass_freq) {
-        double user_lowpass_ratio;
-
-        if (sample_ratio < 1.0)
-            user_lowpass_ratio = lowpass_freq / (resample_rate / 2.0);
-        else
-            user_lowpass_ratio = lowpass_freq / (sample_rate / 2.0);
-
-        if (user_lowpass_ratio >= 1.0)
-            fprintf (stderr, "warning: ignoring invalid lowpass frequency specification (at or over Nyquist)\n");
-        else
-            lowpass_ratio = user_lowpass_ratio;
-    }
-
-    if (lowpass_ratio * sample_ratio < 0.98 && pre_post_filter) {
-        double cutoff = lowpass_ratio * sample_ratio / 2.0;
-        biquad_lowpass (&lowpass_coeff, cutoff);
-        pre_filter = 1;
-
-        if (verbosity > 0)
-            fprintf (stderr, "cascaded biquad pre-filter at %g Hz\n", sample_rate * cutoff);
-    }
-
-    if (num_filters && (sample_ratio != 1.0 || lowpass_ratio != 1.0 || phase_shift != 0.0)) {
-        unsigned long factor = resample_rate / gcd (sample_rate, resample_rate);
-        int flags = SUBSAMPLE_INTERPOLATE;
+    if (num_filters && (sample_ratio != 1.0 || lowpass_freq || phase_shift != 0.0)) {
+        int flags = SUBSAMPLE_INTERPOLATE | INCLUDE_LOWPASS;
 
 #ifdef ENABLE_THREADS
         if (enable_threads)
             flags |= RESAMPLE_MULTITHREADED;
 #endif
 
-        if (factor < num_filters && phase_shift == 0.0) {
-            flags &= ~SUBSAMPLE_INTERPOLATE;
-            num_filters = factor;
-
-            if (verbosity > 0)
-                fprintf (stderr, "resampling %lu --> %lu, reduced filters = %d\n", sample_rate, resample_rate, num_filters);
-        }
-
         if (bh4_window || !hann_window)
             flags |= BLACKMAN_HARRIS;
 
-        if (sample_ratio < 1.0 && !allpass) {
-            resampler = resampleInit (num_channels, num_taps, num_filters, sample_ratio * lowpass_ratio, flags | INCLUDE_LOWPASS);
+        if (phase_shift != 0.0)
+            flags |= NO_FILTER_REDUCTION;
 
-            if (verbosity > 0)
-                fprintf (stderr, "%d %d-tap sinc downsamplers with lowpass at %g Hz, %s interpolation\n",
-                    num_filters, num_taps, sample_ratio * lowpass_ratio * sample_rate / 2.0, (flags & SUBSAMPLE_INTERPOLATE) ? "with" : "no");
+        if (allpass)
+            flags &= ~INCLUDE_LOWPASS;
+
+        resampler = resampleFixedRatioInit (num_channels, num_taps, num_filters, sample_rate * pitch_ratio, resample_rate, lowpass_freq, flags);
+
+        if (!resampler) {
+            fprintf (stderr, "error: resampler initialization failed!\n");
+            return -1;
         }
-        else if (lowpass_ratio < 1.0 && !allpass) {
-            resampler = resampleInit (num_channels, num_taps, num_filters, lowpass_ratio, flags | INCLUDE_LOWPASS);
 
-            if (verbosity > 0)
-                fprintf (stderr, "%d %d-tap sinc resamplers with lowpass at %g Hz, %s interpolation\n",
-                    num_filters, num_taps, lowpass_ratio * sample_rate / 2.0, (flags & SUBSAMPLE_INTERPOLATE) ? "with" : "no");
-        }
-        else {
-            resampler = resampleInit (num_channels, num_taps, num_filters, 1.0, flags);
+        lowpass_freq = resampleGetLowpassRatio (resampler) * sample_rate / 2.0;
+        num_filters = resampleGetNumFilters (resampler);
 
-            if (verbosity > 0)
-                fprintf (stderr, "%d %d-tap pure sinc resamplers (no lowpass), %g Hz Nyquist, %s interpolation\n",
-                    num_filters, num_taps, sample_rate / 2.0, (flags & SUBSAMPLE_INTERPOLATE) ? "with" : "no");
+        if (verbosity > 0) {
+            if (resampleGetLowpassRatio (resampler) == 1.0)
+                fprintf (stderr, "%d %d-tap fixed-ratio sinc resampler%s, no lowpass, %s interpolation\n", num_filters, num_taps,
+                    num_filters > 1 ? "s" : "", resampleInterpolationUsed (resampler) ? "with" : "no");
+            else
+                fprintf (stderr, "%d %d-tap fixed-rate sinc resampler%s with lowpass at %lu Hz, %s interpolation\n", num_filters, num_taps,
+                    num_filters > 1 ? "s" : "", lowpass_freq, resampleInterpolationUsed (resampler) ? "with" : "no");
         }
     }
 
-    if (lowpass_ratio / sample_ratio < 0.98 && pre_post_filter && !pre_filter) {
-        double cutoff = lowpass_ratio / sample_ratio / 2.0;
-        biquad_lowpass (&lowpass_coeff, cutoff);
-        post_filter = 1;
+    if (pre_post_filter) {
+        if (resample_rate <= sample_rate) {
+            double cutoff = resample_rate * 0.45 / sample_rate;
+            biquad_lowpass (&lowpass_coeff, cutoff);
+            pre_filter = 1;
 
-        if (verbosity > 0)
-            fprintf (stderr, "cascaded biquad post-filter at %g Hz\n", resample_rate * cutoff);
+            if (verbosity > 0)
+                fprintf (stderr, "cutoff = %g, cascaded biquad pre-filter at %g Hz\n", cutoff, sample_rate * cutoff);
+        }
+        else {
+            double cutoff = (double) sample_rate * 0.45 / resample_rate;
+            biquad_lowpass (&lowpass_coeff, cutoff);
+            post_filter = 1;
+
+            if (verbosity > 0)
+                fprintf (stderr, "cascaded biquad post-filter at %g Hz\n", resample_rate * cutoff);
+        }
     }
 
     if (pre_filter || post_filter) {
@@ -1165,17 +1137,4 @@ static void native_to_little_endian (void *data, char *format)
 
         format++;
     }
-}
-
-// greatest common divisor
-
-static unsigned long gcd (unsigned long a, unsigned long b)
-{
-    while (b) {
-        unsigned long t = (a %= b);
-        a = b;
-        b = t;
-    }
-
-    return a;
 }
