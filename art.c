@@ -798,7 +798,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             return -1;
         }
 
-        lowpass_freq = resampleGetLowpassRatio (resampler) * sample_rate / 2.0;
+        lowpass_freq = resampleGetLowpassRatio (resampler) * (sample_rate * pitch_ratio / 2.0);
         num_filters = resampleGetNumFilters (resampler);
 
         if (verbosity > 0) {
