@@ -15,6 +15,8 @@ provides fine control over both the CPU load and memory footprint so it can be e
 range of hardware (e.g., ESP32 to high-end ARM). It is also well suited for ASRC (asynchronous sample rate
 converter) applications because it allows the resample ratio to be modified continuously and provides a
 function to query the exact phase position of the resampler (required in the feedback loop of an ASRC).
+The latest version has optimizations to improve speed and accuracy when performing fixed-ratio conversions,
+and also supports multithreading for stereo and multichannel files.
 
 The package includes a command-line program (**ART**) to experiment with the resampler and serve as example
 code for the engine API. The resampling and filtering code works with only 32-bit float audio data, however
@@ -29,7 +31,7 @@ Preset|Number of sinc filters|Number of taps per filter|RAM use (stereo)
 ------|----------------------|-------------------------|----------------
 -1    |       16             |            16           | 3.4 Kbytes
 -2    |       64             |            64           | 25.3 Kbytes
--3    |      256             |           256           | 293 Kbytes
+-3    |      320             |           256           | 358 Kbytes
 -4    |     1024             |          1024           | 4244 Kbytes
 
 Preset **-3** is the default and is a reasonable compromise for high-quality resampling on a PC. Presets **-1**
@@ -87,18 +89,26 @@ This is invoked with three new options, which are differentiated from previous o
 **very audible and annoying artifacts**, especially when used with large stretch ratios or with highly
 polyphonic source material. This is in contrast to the regular resampling operation that is intended
 to be completely transparent.
+
+Version 0.5 has a new initialization API targeting fixed-ratio sample rate conversions (i.e., converting
+from one specific rate to another). This involves determining whether a specific reduced number of sinc
+filters can perform the resampling directly without interpolations. If possible, this reduces the memory
+required for the filters, doubles the performance, and increases the numeric accuracy of the calculations.
+Since this API has access to the actual sample rates, it can also automatically select the ideal lowpass
+for downsampling operations. Optional multithreading has been implemented to further improve the speed of
+stereo and multichannel conversions, and a new benchmarking tool has been added.
  
 
 ## Building
 
 To build an optimized version of the command-line tool (**ART**) on Linux or OS-X:
 
-> $ gcc -O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math art.c stretch.c resampler.c decimator.c biquad.c -lm -o art
+> $ gcc -O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math -DENABLE_THREADS art.c stretch.c resampler.c decimator.c workers.c biquad.c -lm -pthread -o art
 
 The "help" display from the command-line app:
 
 ```
- ART  Audio Resampling Tool  Version 0.4
+ ART  Audio Resampling Tool  Version 0.5
  Copyright (c) 2006 - 2025 David Bryant.
 
  Usage:     ART [-options] infile.wav outfile.wav
@@ -110,7 +120,7 @@ The "help" display from the command-line app:
            -s<degrees> = add specified phase shift (+/-360 degrees)
            -l<Hz>      = specify alternate lowpass frequency in Hz
                            (follow freq with 'k' for kHz)
-           -f<num>     = number of sinc filters (2-1024)
+           -f<num>     = number of sinc filters (1-1024)
            -t<num>     = number of sinc taps (4-1024, multiples of 4)
            -o<bits>    = change output file bitdepth (4-24 or 32)
            -d<sel>     = override default dither (which is HP tpdf):
@@ -125,6 +135,7 @@ The "help" display from the command-line app:
            -a          = allpass sinc (no lowpass, even downsampling)
            -b          = Blackman-Harris windowing (best stopband)
            -h          = Hann windowing (fastest transition)
+           -m          = use multithreading on stereo & multichannel files
            -p          = pre/post filtering (cascaded biquads)
            -q          = quiet mode (display errors only)
            -v          = verbose (display lots of info)
