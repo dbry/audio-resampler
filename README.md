@@ -76,12 +76,12 @@ or after upsampling as this can be more efficient than increasing the length of 
 enabled with the **-p** option in the CLI and implements a cascaded pair of 2nd-order biquads. Note that
 unlike the sinc filters, these filters are not linear-phase and will introduce group delay.
 
-For version 0.3 the decimation code has been moved from the command-line program into its own module
+For **version 0.3** the decimation code has been moved from the command-line program into its own module
 and header file (decimator.[ch]) so that it can be utilized by other applications. Also, the dither and
 noise-shaping are now configurable and the noise-shaping defaults to strong ATH filters for popular
 sampling rates based on [this excellent guide](https://wiki.hydrogenaud.io/index.php?title=Noise_shaping).
 
-For version 0.4 the demo now allows for time stretching / pitch modification provided by a version of
+For **version 0.4** the demo now allows for time stretching / pitch modification provided by a version of
 my [audio-stretch](https://github.com/dbry/audio-stretch) library adapted to work with 32-bit float audio.
 This is invoked with three new options, which are differentiated from previous options by being long form:
 **--pitch**, **--tempo** and **--duration**. Note that this is only available with mono and stereo files
@@ -90,7 +90,7 @@ This is invoked with three new options, which are differentiated from previous o
 polyphonic source material. This is in contrast to the regular resampling operation that is intended
 to be completely transparent.
 
-Version 0.5 has a new initialization API targeting fixed-ratio sample rate conversions (i.e., converting
+**Version 0.5** has a new initialization API targeting fixed-ratio sample rate conversions (i.e., converting
 from one specific rate to another). This involves determining whether a specific reduced number of sinc
 filters can perform the resampling directly without interpolations. If possible, this reduces the memory
 required for the filters, doubles the performance, and increases the numeric accuracy of the calculations.
