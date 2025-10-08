@@ -138,22 +138,22 @@ int main (int argc, char **argv)
             while (*++*argv)
                 switch (**argv) {
 
-		    case '1':
-			num_filters = num_taps = 16;
-			break;
+                    case '1':
+                        num_filters = num_taps = 16;
+                        break;
 
-		    case '2':
-			num_filters = num_taps = 64;
-			break;
+                    case '2':
+                        num_filters = num_taps = 64;
+                        break;
 
-		    case '3':
-			num_filters = 320;      // hack to allow optimized 44.1k --> 96k at default quality
-			num_taps = 256;
-			break;
+                    case '3':
+                        num_filters = 320;      // hack to allow optimized 44.1k --> 96k at default quality
+                        num_taps = 256;
+                        break;
 
-		    case '4':
-			num_filters = num_taps = 1024;
-			break;
+                    case '4':
+                        num_filters = num_taps = 1024;
+                        break;
 
                     case 'A': case 'a':
                         allpass = 1;
@@ -179,7 +179,7 @@ int main (int argc, char **argv)
                         overwrite = 1;
                         break;
 
-		    case 'R': case 'r':
+                    case 'R': case 'r':
                         {
                             double rate = strtod (++*argv, argv);
 
@@ -191,9 +191,9 @@ int main (int argc, char **argv)
                             resample_rate = rate;
                         }
 
-			break;
+                        break;
 
-		    case 'D': case 'd':
+                    case 'D': case 'd':
                         {
                             int dither_select = strtod (++*argv, argv);
 
@@ -213,12 +213,12 @@ int main (int argc, char **argv)
                             }
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'N': case 'n':
+                    case 'N': case 'n':
                         {
-			    int noise_shaping_select = strtod (++*argv, argv);
+                            int noise_shaping_select = strtod (++*argv, argv);
 
                             switch (noise_shaping_select) {
                                 case 0:
@@ -239,26 +239,26 @@ int main (int argc, char **argv)
                             }
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'S': case 's':
-			phase_shift = strtod (++*argv, argv) / 360.0;
+                    case 'S': case 's':
+                        phase_shift = strtod (++*argv, argv) / 360.0;
 
                         if (phase_shift <= -1.0 || phase_shift >= 1.0) {
                             fprintf (stderr, "\nphase shift must be less than +/- 1 sample!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'G': case 'g':
-			gain = pow (10.0, strtod (++*argv, argv) / 20.0);
-			--*argv;
-			break;
+                    case 'G': case 'g':
+                        gain = pow (10.0, strtod (++*argv, argv) / 20.0);
+                        --*argv;
+                        break;
 
-		    case 'L': case 'l':
+                    case 'L': case 'l':
                         {
                             double freq = strtod (++*argv, argv);
 
@@ -270,48 +270,48 @@ int main (int argc, char **argv)
                             lowpass_freq = freq;
                         }
 
-			break;
+                        break;
 
-		    case 'F': case 'f':
-			num_filters = strtod (++*argv, argv);
+                    case 'F': case 'f':
+                        num_filters = strtod (++*argv, argv);
 
                         if (num_filters < 1 || num_filters > 1024) {
                             fprintf (stderr, "\nnum of filters must be 1 - 1024!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'O': case 'o':
-			outbits = strtod (++*argv, argv);
+                    case 'O': case 'o':
+                        outbits = strtod (++*argv, argv);
 
                         if (outbits != 32 && (outbits < 4 || outbits > 24)) {
                             fprintf (stderr, "\noutbits must be 4 - 24 (for integer) or 32 (for float)!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'T': case 't':
-			num_taps = strtod (++*argv, argv);
+                    case 'T': case 't':
+                        num_taps = strtod (++*argv, argv);
 
                         if ((num_taps & 3) || num_taps < 4 || num_taps > 1024) {
                             fprintf (stderr, "\nnum of taps must be 4 - 1024 and a multiple of 4!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'B': case 'b':
-			bh4_window = 1;
-			break;
+                    case 'B': case 'b':
+                        bh4_window = 1;
+                        break;
 
-		    case 'H': case 'h':
-			hann_window = 1;
-			break;
+                    case 'H': case 'h':
+                        hann_window = 1;
+                        break;
 
                     default:
                         fprintf (stderr, "\nillegal option: %c !\n", **argv);

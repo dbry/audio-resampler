@@ -22,8 +22,8 @@ typedef struct {
 } BiquadCoefficients;
 
 typedef struct {
-    float a[5], b[5];	            // coefficients
-    float x[4], y[4];	            // delayed input/output
+    float a[5], b[5];               // coefficients
+    float x[4], y[4];               // delayed input/output
     int order, index;
 } Biquad;
 

@@ -129,56 +129,56 @@ int main (int argc, char **argv)
             while (*++*argv)
                 switch (**argv) {
 
-		    case '1':
-			filters = taps = 16;
-			break;
+                    case '1':
+                        filters = taps = 16;
+                        break;
 
-		    case '2':
-			filters = taps = 64;
-			break;
+                    case '2':
+                        filters = taps = 64;
+                        break;
 
-		    case '3':
-			filters = 320;      // hack to allow optimized 44.1k --> 96k at default quality
-			taps = 256;
-			break;
+                    case '3':
+                        filters = 320;      // hack to allow optimized 44.1k --> 96k at default quality
+                        taps = 256;
+                        break;
 
-		    case '4':
-			filters = taps = 1024;
-			break;
+                    case '4':
+                        filters = taps = 1024;
+                        break;
 #ifdef FIXED_RATIO
-		    case 'e':
-			exact = 1;
-			break;
+                    case 'e':
+                        exact = 1;
+                        break;
 #endif
-		    case 'r':
-			read_stdin = 1;
-			break;
+                    case 'r':
+                        read_stdin = 1;
+                        break;
 
-		    case 'w':
-			write_stdout = strtod (++*argv, argv);
+                    case 'w':
+                        write_stdout = strtod (++*argv, argv);
 
                         if (write_stdout < 0 || write_stdout > 5) {
                             fprintf (stderr, "\nwritten stream must be 0 - 5!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'i':
-			inv_resample = 1;
-			break;
+                    case 'i':
+                        inv_resample = 1;
+                        break;
 
-		    case 'v':
-			non_interleaved = 1;
-			break;
+                    case 'v':
+                        non_interleaved = 1;
+                        break;
 #ifdef ENABLE_THREADS
                     case 'm':
                         multithreading = DECIMATE_MULTITHREADED;
                         flags |= RESAMPLE_MULTITHREADED;
                         break;
 #endif
-		    case 'S': case 's':
+                    case 'S': case 's':
                         {
                             double rate = strtod (++*argv, argv);
 
@@ -190,9 +190,9 @@ int main (int argc, char **argv)
                             source_rate = rate;
                         }
 
-			break;
+                        break;
 
-		    case 'D': case 'd':
+                    case 'D': case 'd':
                         {
                             double freq = strtod (++*argv, argv);
 
@@ -204,9 +204,9 @@ int main (int argc, char **argv)
                             destin_rate = freq;
                         }
 
-			break;
+                        break;
 
-		    case 'L': case 'l':
+                    case 'L': case 'l':
                         {
                             double freq = strtod (++*argv, argv);
 
@@ -219,54 +219,54 @@ int main (int argc, char **argv)
                             flags |= INCLUDE_LOWPASS;
                         }
 
-			break;
+                        break;
 
-		    case 'B': case 'b':
-			inbuffer_samples = strtod (++*argv, argv);
+                    case 'B': case 'b':
+                        inbuffer_samples = strtod (++*argv, argv);
 
                         if (inbuffer_samples < 256 || inbuffer_samples > 65536) {
                             fprintf (stderr, "\ninbuffer samples must be 256 - 65536!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'C': case 'c':
-			chans = strtod (++*argv, argv);
+                    case 'C': case 'c':
+                        chans = strtod (++*argv, argv);
 
                         if (chans < 1 || chans > 256) {
                             fprintf (stderr, "\nnum of chans must be 1 - 256!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'F': case 'f':
-			filters = strtod (++*argv, argv);
+                    case 'F': case 'f':
+                        filters = strtod (++*argv, argv);
 
                         if (filters < 1 || filters > 1024) {
                             fprintf (stderr, "\nnum of filters must be 1 - 1024!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'N': case 'n':
-			seconds = strtod (++*argv, argv);
+                    case 'N': case 'n':
+                        seconds = strtod (++*argv, argv);
 
                         if (seconds < 1 || seconds > 36000) {
                             fprintf (stderr, "\nnumber of seconds must be 1 - 36000!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'O': case 'o':
-			outbits = strtod (++*argv, argv);
+                    case 'O': case 'o':
+                        outbits = strtod (++*argv, argv);
 
                         if (outbits != 32 && (outbits < 4 || outbits > 24)) {
                             fprintf (stderr, "\noutbits must be 4 - 24 (for integer) or 32 (for float)!\n");
@@ -274,19 +274,19 @@ int main (int argc, char **argv)
                         }
 
                         outbytes = (outbits + 7) / 8;
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
-		    case 'T': case 't':
-			taps = strtod (++*argv, argv);
+                    case 'T': case 't':
+                        taps = strtod (++*argv, argv);
 
                         if ((taps & 3) || taps < 4 || taps > 1024) {
                             fprintf (stderr, "\nnum of taps must be 4 - 1024 and a multiple of 4!\n");
                             return 1;
                         }
 
-			--*argv;
-			break;
+                        --*argv;
+                        break;
 
                     default:
                         fprintf (stderr, "\nillegal option: %c !\n", **argv);
