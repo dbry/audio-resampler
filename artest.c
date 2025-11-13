@@ -24,12 +24,13 @@
 // 1. Reverse resample and inverse paste for measuring resampling fidelity
 // 2. Testing of interleaved and non-interleaved versions, and decimation
 // 3. Benchmarking speed without concern for I/O latency
-//
+
 #define FIXED_RATIO     // define if resampler module has resampleFixedRatioInit()
 
 static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio);
 static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *input, int numInputFrames, unsigned char *output);
-static void fill_buffer (float *data, int count);
+static void fill_buffer_with_noise (float *data, int count), fill_buffer_with_tone (float *data, int count, int chans, double freq);
+static void fade_in (float *data, int count), fade_out (float *data, int count);
 
 static const char *usage =
 " Usage:     ARTEST [-options] [< infile.raw] [> outfile.raw]\n\n"
@@ -37,6 +38,7 @@ static const char *usage =
 "           -b<num>     = inbuffer samples (default 4096)\n"
 "           -c<num>     = number of channels (1-256, default 2)\n"
 "           -n<num>     = number of seconds (1-3600, default 60)\n"
+"           -h[<Hz>]    = use 1kc freq tone instead of white noise\n"
 "           -s<Hz>      = source sample rate in Hz\n"
 "                          (follow rate with 'k' for kHz)\n"
 "           -d<Hz>      = destin sample rate in Hz\n"
@@ -60,20 +62,25 @@ static const char *usage =
 "           -m          = run resampler and decimator multi-threaded\n"
 #endif
 "           -i          = inverse-resample and compare to source\n"
-"           -v          = test non-interleaved versions\n"
+"           -a          = do not fade-in and fade-out audio endpoints\n"
+"           -v          = test non-interleaved versions (if they exist)\n"
 "           -o<bits>    = change output file bitdepth (4-24 or 32)\n\n";
 
 typedef struct {
     uint64_t count, checksum;
     float min, max;
     double rms;
+    int chans;
 } Stats;
 
-void update_stats (float *data, int samples, Stats *stats)
+void update_stats (float *data, int samples, int chans, Stats *stats)
 {
-    stats->count += samples;
+    int tsamples = samples * chans;
 
-    while (samples--) {
+    stats->count += tsamples;
+    stats->chans = chans;
+
+    while (tsamples--) {
         stats->checksum = (stats->checksum * 3) + *(uint32_t*)(data);
         if (*data > stats->max) stats->max = *data;
         if (*data < stats->min) stats->min = *data;
@@ -86,7 +93,7 @@ char *display_stats (Stats *stats)
 {
     static char string [128];
 
-    sprintf (string, "count = %9llu, checksum = %016llx, range = %.7f to %.7f, RMS = %.2f dB", (unsigned long long) stats->count,
+    sprintf (string, "count = %9llu, checksum = %016llx, range = %.7f to %.7f, RMS = %.2f dB", (unsigned long long) stats->count / stats->chans,
         (unsigned long long) stats->checksum, stats->min, stats->max, log10 (stats->rms / stats->count * 2.0) * 10.0);
 
     return string;
@@ -96,22 +103,23 @@ int main (int argc, char **argv)
 {
     int inbuffer_samples = 4096, outbuffer_samples = 0, invbuffer_samples = 0, rembuffer_samples = 0;
     int read_stdin = 0, write_stdout = 0, exact = 0, non_interleaved = 0, inv_resample = 0, buffers;
-    int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, multithreading = 0;
+    int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, multithreading = 0, fades = 1;
     int chans = 2, taps = 256, filters = 320, seconds = 60, outbits = 32, outbytes = 4;
     float *inbuffer = NULL, *outbuffer = NULL, *invbuffer = NULL, *rembuffer = NULL;
     int source_rate = 0, destin_rate = 0, lowpass_freq = 0;
     int flags = BLACKMAN_HARRIS | SUBSAMPLE_INTERPOLATE;
     Resample *resampler = NULL, *inv_resampler = NULL;
-    Stats out_stats = { 0, 0, 1e20, -1e20, 0 };
-    Stats in_stats = { 0, 0, 1e20, -1e20, 0 };
-    Stats inv_stats = { 0, 0, 1e20, -1e20, 0 };
-    Stats diff_stats = { 0, 0, 1e20, -1e20, 0 };
+    Stats out_stats = { 0, 0, 1e20, -1e20, 0, chans };
+    Stats in_stats = { 0, 0, 1e20, -1e20, 0, chans };
+    Stats inv_stats = { 0, 0, 1e20, -1e20, 0, chans };
+    Stats diff_stats = { 0, 0, 1e20, -1e20, 0, chans };
     unsigned char *decimate_buffer;
     Decimate *decimator = NULL;
     uint64_t dec_checksum = 0;
     int clipped_samples = 0;
     double ratio, inv_ratio;
     uint64_t out_bytes = 0;
+    double tone_freq = 0.0;
 
     if (argc < 3) {
         fprintf (stderr, "%s", usage);
@@ -144,6 +152,10 @@ int main (int argc, char **argv)
 
                     case '4':
                         filters = taps = 1024;
+                        break;
+
+                    case 'a':
+                        fades = 0;
                         break;
 #ifdef FIXED_RATIO
                     case 'e':
@@ -178,6 +190,20 @@ int main (int argc, char **argv)
                         flags |= RESAMPLE_MULTITHREADED;
                         break;
 #endif
+                    case 'H': case 'h':
+                        {
+                            double freq = strtod (++*argv, argv);
+
+                            if ((**argv & 0xdf) == 'K')
+                                freq *= 1000.0;
+                            else
+                                --*argv;
+
+                            tone_freq = freq == 0.0 ? 1000.0 : freq;
+                        }
+
+                        break;
+
                     case 'S': case 's':
                         {
                             double rate = strtod (++*argv, argv);
@@ -320,7 +346,7 @@ int main (int argc, char **argv)
     buffers = ceil ((double) seconds * source_rate / inbuffer_samples);
 
     if (inv_resample) {
-        invbuffer_samples = inbuffer_samples + 10;
+        invbuffer_samples = inbuffer_samples + taps + 10;
         invbuffer = malloc (invbuffer_samples * chans * sizeof (float));
         inv_ratio = (double) source_rate / destin_rate;
         rembuffer = malloc (inbuffer_samples * chans * sizeof (float));
@@ -382,15 +408,24 @@ int main (int argc, char **argv)
 
         if (read_stdin)
             inbuffer_samples = fread (inbuffer, sizeof (float) * chans, inbuffer_samples, stdin);
-        else if (bi && bi < buffers - 1)
-            fill_buffer (inbuffer, inbuffer_samples * chans);
-        else
-            memset (inbuffer, 0, inbuffer_samples * chans * sizeof (float));
+        else {
+            if (tone_freq)
+                fill_buffer_with_tone (inbuffer, inbuffer_samples, chans, tone_freq / source_rate);
+            else
+                fill_buffer_with_noise (inbuffer, inbuffer_samples * chans);
+
+            if (fades) {
+                if (bi == 0)
+                    fade_in (inbuffer, inbuffer_samples * chans);
+                else if (bi == buffers - 1)
+                    fade_out (inbuffer, inbuffer_samples * chans);
+            }
+        }
 
         if (!inbuffer_samples)
             break;
 
-        update_stats (inbuffer, inbuffer_samples * chans, &in_stats);
+        update_stats (inbuffer, inbuffer_samples, chans, &in_stats);
 
         if (write_stdout == 1)
             fwrite (inbuffer, sizeof (float) * chans, inbuffer_samples, stdout);
@@ -409,7 +444,7 @@ int main (int argc, char **argv)
             exit (1);
         }
 
-        update_stats (outbuffer, res.output_generated * chans, &out_stats);
+        update_stats (outbuffer, res.output_generated, chans, &out_stats);
 
         if (write_stdout == 2)
             fwrite (outbuffer, sizeof (float) * chans, res.output_generated, stdout);
@@ -429,7 +464,7 @@ int main (int argc, char **argv)
                 exit (1);
             }
 
-            update_stats (invbuffer, inv_res.output_generated * chans, &inv_stats);
+            update_stats (invbuffer, inv_res.output_generated, chans, &inv_stats);
 
             if (write_stdout == 4)
                 fwrite (invbuffer, sizeof (float) * chans, inv_res.output_generated, stdout);
@@ -456,7 +491,7 @@ int main (int argc, char **argv)
 
             rembuffer_samples = next_rembuffer_samples;
 
-            update_stats (invbuffer, inv_res.output_generated * chans, &diff_stats);
+            update_stats (invbuffer, inv_res.output_generated, chans, &diff_stats);
 
             if (write_stdout == 5)
                 fwrite (invbuffer, sizeof (float) * chans, inv_res.output_generated, stdout);
@@ -597,7 +632,7 @@ static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const 
 
 // fill buffer with +/-0.5 white noise
 
-static void fill_buffer (float *data, int count)
+static void fill_buffer_with_noise (float *data, int count)
 {
     static uint64_t random = 0x3141592653589793;
 
@@ -607,4 +642,48 @@ static void fill_buffer (float *data, int count)
         random = ((random << 4) - random) ^ 1;
         *data++ = (int32_t)(random >> 32) / 4294967296.0;
     }
+}
+
+// fill buffer with +/-0.5 tone at specified frequency
+
+static void fill_buffer_with_tone (float *data, int count, int chans, double freq)
+{
+    static double phase_angle;
+    double chan_offset;
+
+    if (chans == 2)
+        chan_offset = M_PI / 2.0;
+    else if (chans > 2)
+        chan_offset = 2.0 * M_PI / chans;
+
+    while (count--) {
+        *data++ = sin (phase_angle += 2 * M_PI * freq) * 0.5;
+
+        for (int c = 1; c < chans; ++c)
+            *data++ = sin (phase_angle + chan_offset * c) * 0.5;
+    }
+}
+
+static void fade_in (float *data, int count)
+{
+    int zcount = count / 4;
+    int fcount = count - zcount;
+
+    for (int i = 0; i < zcount; ++i)
+        *data++ = 0.0;
+
+    for (int i = 0; i < fcount; ++i)
+        *data++ *= (double) i / fcount;
+}
+
+static void fade_out (float *data, int count)
+{
+    int zcount = count / 4;
+    int fcount = count - zcount;
+
+    for (int i = 0; i < fcount; ++i)
+        *data++ *= (double) (fcount - i) / fcount;
+
+    for (int i = 0; i < zcount; ++i)
+        *data++ = 0.0;
 }
