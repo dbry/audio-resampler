@@ -28,6 +28,7 @@
 #define FIXED_RATIO     // define if resampler module has resampleFixedRatioInit()
 
 static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio);
+static ResampleResult resampleProcessAndFlushInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio);
 static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *input, int numInputFrames, unsigned char *output);
 static void fill_buffer_with_noise (float *data, int count), fill_buffer_with_tone (float *data, int count, int chans, double freq);
 static void fade_in (float *data, int count), fade_out (float *data, int count);
@@ -63,6 +64,7 @@ static const char *usage =
 #endif
 "           -i          = inverse-resample and compare to source\n"
 "           -a          = do not fade-in and fade-out audio endpoints\n"
+"           -p          = separate final block from terminating flush\n"
 "           -v          = test non-interleaved versions (if they exist)\n"
 "           -o<bits>    = change output file bitdepth (4-24 or 32)\n\n";
 
@@ -103,7 +105,7 @@ int main (int argc, char **argv)
 {
     int inbuffer_samples = 4096, outbuffer_samples = 0, invbuffer_samples = 0, rembuffer_samples = 0;
     int read_stdin = 0, write_stdout = 0, exact = 0, non_interleaved = 0, inv_resample = 0, buffers;
-    int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, multithreading = 0, fades = 1;
+    int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, multithreading = 0, fades = 1, separate_flush = 0;
     int chans = 2, taps = 256, filters = 320, seconds = 60, outbits = 32, outbytes = 4;
     float *inbuffer = NULL, *outbuffer = NULL, *invbuffer = NULL, *rembuffer = NULL;
     int source_rate = 0, destin_rate = 0, lowpass_freq = 0;
@@ -183,6 +185,10 @@ int main (int argc, char **argv)
 
                     case 'v':
                         non_interleaved = 1;
+                        break;
+
+                    case 'p':
+                        separate_flush = 1;
                         break;
 #ifdef ENABLE_THREADS
                     case 'm':
@@ -329,24 +335,19 @@ int main (int argc, char **argv)
         exit (1);
     }
 
-    if ((flags & INCLUDE_LOWPASS) && inv_resample) {
-        fprintf (stderr, "\nlowpass cannot be used with inverse resampling!\n\n");
-        exit (1);
-    }
-
     if ((flags & INCLUDE_LOWPASS) && !lowpass_freq && !exact) {
         fprintf (stderr, "\nspecify lowpass frequency, auto lowpass can only be used with exact resampling (-e)!\n\n");
         exit (1);
     }
 
     ratio = (double) destin_rate / source_rate;
-    outbuffer_samples = floor (inbuffer_samples * ratio * 1.1 + 100);
+    outbuffer_samples = floor ((inbuffer_samples + taps / 2) * ratio + 10);
     inbuffer = malloc (inbuffer_samples * chans * sizeof (float));
     outbuffer = malloc (outbuffer_samples * chans * sizeof (float));
     buffers = ceil ((double) seconds * source_rate / inbuffer_samples);
 
     if (inv_resample) {
-        invbuffer_samples = inbuffer_samples + taps + 10;
+        invbuffer_samples = floor ((outbuffer_samples + taps / 2) / ratio + 10);
         invbuffer = malloc (invbuffer_samples * chans * sizeof (float));
         inv_ratio = (double) source_rate / destin_rate;
         rembuffer = malloc (inbuffer_samples * chans * sizeof (float));
@@ -376,7 +377,7 @@ int main (int argc, char **argv)
                         actual_filters > 1 ? "s" : "", resampleInterpolationUsed (inv_resampler) ? "with" : "no");
                 else
                     fprintf (stderr, "w2 --> w4: %d %d-tap fixed-rate sinc resampler%s with lowpass at %lu Hz, %s interpolation\n", actual_filters, taps,
-                        actual_filters > 1 ? "s" : "", (unsigned long)(resampleGetLowpassRatio (inv_resampler) * source_rate / 2.0), resampleInterpolationUsed (inv_resampler) ? "with" : "no");
+                        actual_filters > 1 ? "s" : "", (unsigned long)(resampleGetLowpassRatio (inv_resampler) * destin_rate / 2.0), resampleInterpolationUsed (inv_resampler) ? "with" : "no");
             }
 
             inv_ratio = ratio = 0.0;
@@ -386,8 +387,23 @@ int main (int argc, char **argv)
         {
             resampler = resampleInit (chans, taps, filters, lowpass_freq * 2.0 / source_rate, flags);
 
-            if (inv_resample)
+            if (resampleGetLowpassRatio (resampler) == 1.0)
+                fprintf (stderr, "w1 --> w2: %d %d-tap fixed-ratio sinc resampler%s, no lowpass, %s interpolation\n", filters, taps,
+                    filters > 1 ? "s" : "", resampleInterpolationUsed (resampler) ? "with" : "no");
+            else
+                fprintf (stderr, "w1 --> w2: %d %d-tap fixed-rate sinc resampler%s with lowpass at %lu Hz, %s interpolation\n", filters, taps,
+                    filters > 1 ? "s" : "", (unsigned long)(resampleGetLowpassRatio (resampler) * source_rate / 2.0), resampleInterpolationUsed (resampler) ? "with" : "no");
+
+            if (inv_resample) {
                 inv_resampler = resampleInit (chans, taps, filters, lowpass_freq * 2.0 / destin_rate, flags);
+
+                if (resampleGetLowpassRatio (inv_resampler) == 1.0)
+                    fprintf (stderr, "w2 --> w4: %d %d-tap fixed-ratio sinc resampler%s, no lowpass, %s interpolation\n", filters, taps,
+                        filters > 1 ? "s" : "", resampleInterpolationUsed (inv_resampler) ? "with" : "no");
+                else
+                    fprintf (stderr, "w2 --> w4: %d %d-tap fixed-rate sinc resampler%s with lowpass at %lu Hz, %s interpolation\n", filters, taps,
+                        filters > 1 ? "s" : "", (unsigned long)(resampleGetLowpassRatio (inv_resampler) * destin_rate / 2.0), resampleInterpolationUsed (inv_resampler) ? "with" : "no");
+            }
         }
 
         resampleAdvancePosition (resampler, taps / 2.0);
@@ -434,10 +450,27 @@ int main (int argc, char **argv)
             memcpy (outbuffer, inbuffer, inbuffer_samples * chans * sizeof (float));
             res.output_generated = res.input_used = inbuffer_samples;
         }
-        else if (non_interleaved)
-            res = resampleProcessInterleavedSimulator (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio);
+        else if (bi < buffers - 1)
+            res = non_interleaved ?
+                resampleProcessInterleavedSimulator (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio) :
+                resampleProcessInterleaved (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio);
+        else if (separate_flush) {
+            res = non_interleaved ?
+                resampleProcessInterleavedSimulator (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio) :
+                resampleProcessInterleaved (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio);
+
+            if (inbuffer_samples == res.input_used && outbuffer_samples > res.output_generated) {
+                ResampleResult fres = non_interleaved ?
+                    resampleProcessAndFlushInterleavedSimulator (resampler, NULL, 0, outbuffer + res.output_generated * chans, outbuffer_samples - res.output_generated, ratio):
+                    resampleProcessAndFlushInterleaved (resampler, NULL, 0, outbuffer + res.output_generated * chans, outbuffer_samples - res.output_generated, ratio);
+
+                res.output_generated += fres.output_generated;
+            }
+        }
         else
-            res = resampleProcessInterleaved (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio);
+            res = non_interleaved ?
+                resampleProcessAndFlushInterleavedSimulator (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio) :
+                resampleProcessAndFlushInterleaved (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio);
 
         if (res.input_used != inbuffer_samples || res.output_generated == outbuffer_samples) {
             fprintf (stderr, "fatal error in resample results!\n");
@@ -454,10 +487,36 @@ int main (int argc, char **argv)
                 memcpy (invbuffer, outbuffer, res.output_generated * chans * sizeof (float));
                 inv_res.output_generated = inv_res.input_used = res.output_generated;
             }
-            else if (non_interleaved)
-                inv_res = resampleProcessInterleavedSimulator (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio);
+            else if (bi < buffers - 1) {
+                inv_res = non_interleaved ?
+                    resampleProcessInterleavedSimulator (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio) :
+                    resampleProcessInterleaved (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio);
+            }
+            else if (separate_flush) {
+                inv_res = non_interleaved ?
+                    resampleProcessInterleavedSimulator (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio) :
+                    resampleProcessInterleaved (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio);
+
+                if (res.output_generated == inv_res.input_used && invbuffer_samples > inv_res.output_generated) {
+                    ResampleResult fres = non_interleaved ?
+                        resampleProcessAndFlushInterleavedSimulator (inv_resampler, NULL, 0, invbuffer + inv_res.output_generated * chans, invbuffer_samples - inv_res.output_generated, inv_ratio) :
+                        resampleProcessAndFlushInterleaved (inv_resampler, NULL, 0, invbuffer + inv_res.output_generated * chans, invbuffer_samples - inv_res.output_generated, inv_ratio);
+
+                    inv_res.output_generated += fres.output_generated;
+                }
+            }
             else
-                inv_res = resampleProcessInterleaved (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio);
+                inv_res = non_interleaved ?
+                    resampleProcessAndFlushInterleavedSimulator (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio) :
+                    resampleProcessAndFlushInterleaved (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio);
+
+            // this handles the case where, at the end, we've generated one or two more samples than we started with because of rounding
+            if (inv_res.output_generated > rembuffer_samples + inbuffer_samples) {
+                fprintf (stderr, "info: we generated %d extra sample(s) on round-trip resample\n", inv_res.output_generated - (rembuffer_samples + inbuffer_samples));
+                inv_res.output_generated = rembuffer_samples + inbuffer_samples;
+            }
+            else if (bi == buffers - 1 && inv_res.output_generated < rembuffer_samples + inbuffer_samples)
+                fprintf (stderr, "info: we generated %d fewer sample(s) on round-trip resample\n", inv_res.output_generated - (rembuffer_samples + inbuffer_samples));
 
             if (inv_res.input_used != res.output_generated || inv_res.output_generated == invbuffer_samples) {
                 fprintf (stderr, "fatal error in inverse resample results!\n");
@@ -581,7 +640,6 @@ static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *in
 
 static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
 {
-    if (cxt->numChannels > 8) fprintf (stderr, "resampleProcessInterleavedSimulator (chans = %d)\n", cxt->numChannels);
     float *input_array [cxt->numChannels];
     float *output_array [cxt->numChannels];
 
@@ -629,6 +687,34 @@ static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const 
 }
 
 #endif
+
+static ResampleResult resampleProcessAndFlushInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
+{
+    float *input_array [cxt->numChannels];
+    float *output_array [cxt->numChannels];
+
+    for (int c = 0; c < cxt->numChannels; ++c) {
+        input_array [c] = malloc (numInputFrames * sizeof (float));
+        output_array [c] = malloc (numOutputFrames * sizeof (float));
+    }
+
+    for (int i = 0; i < numInputFrames; ++i)
+        for (int c = 0; c < cxt->numChannels; ++c)
+            input_array [c] [i] = *input++;
+
+    ResampleResult res = resampleProcessAndFlush (cxt, input ? (const float * const *) input_array : NULL, numInputFrames, output_array, numOutputFrames, ratio);
+
+    for (int i = 0; i < res.output_generated; ++i)
+        for (int c = 0; c < cxt->numChannels; ++c)
+            *output++ = output_array [c] [i];
+
+    for (int c = 0; c < cxt->numChannels; ++c) {
+        free (input_array [c]);
+        free (output_array [c]);
+    }
+
+    return res;
+}
 
 // fill buffer with +/-0.5 white noise
 

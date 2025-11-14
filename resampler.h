@@ -52,6 +52,8 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, double sourceRate, double destinRate, int lowpassFreq, int flags);
 ResampleResult resampleProcess (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio);
 ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio);
+ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio);
+ResampleResult resampleProcessAndFlushInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio);
 unsigned int resampleGetRequiredSamples (Resample *cxt, int numOutputFrames, double ratio);
 unsigned int resampleGetExpectedOutput (Resample *cxt, int numInputFrames, double ratio);
 void resampleAdvancePosition (Resample *cxt, double delta);

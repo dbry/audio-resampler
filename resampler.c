@@ -536,6 +536,83 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, in
 #endif
 }
 
+// These two functions are extensions of resampleProcess() and resampleProcessInterleaved() that additionally
+// perform a final "flush" operation on the specified resampler. Normally, during resampling, the output is
+// delayed from the input by half the width of the sinc filter. This is because the entire width of the filter
+// must be visible in the input data to be able to generate an output sample which is aligned to the center of
+// the filter. However, at the end of a conversion it's usually desirable to flush the extra data out of the
+// resampler so that the output will be exactly aligned to the input. Previously, this flush alignment was
+// forced by feeding the appropriate number of zeros into the resampler, but now these two functions can
+// accomplish the same thing more cleanly.
+//
+// There are two ways of using these functions. First, it's possble to just use them for the last block of
+// samples and the "flushed" samples will simply be appended to the generated output, with the total number
+// of samples generated still indicated by the "output_generated" field of the ResampleResult. Be sure to
+// have enough buffer space available.
+//
+// Alternatively, these functions can be used to only generate the "flushed" samples without providing any
+// additional input (for example when the last block is not known until after it's been resampled). This is
+// accomplished by simply calling the functions with the "input" pointer set to NULL and the numInputFrames
+// set to zero.
+
+ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio)
+{
+    float *output_array [cxt->numChannels], *fbuffers [cxt->numChannels];
+    ResampleResult res = { 0, 0 }, fres;
+
+    for (int c = 0; c < cxt->numChannels; ++c)
+        output_array [c] = output [c];
+
+    if (input && numInputFrames) {
+        res = resampleProcess (cxt, input, numInputFrames, output_array, numOutputFrames, ratio);
+
+        // if we didn't consume all the input or ran out of output space, we're finished
+        // (and this is obviously an unforced error, but the caller will have to sort that out)
+
+        if ((numInputFrames -= res.input_used) != 0 || (numOutputFrames -= res.output_generated) == 0)
+            return res;
+
+        for (int c = 0; c < cxt->numChannels; ++c)
+            output_array [c] += res.output_generated;
+    }
+
+    for (int c = 0; c < cxt->numChannels; ++c)
+        fbuffers [c] = calloc (sizeof (float), cxt->numTaps / 2);
+
+    fres = resampleProcess (cxt, (const float * const *) fbuffers, cxt->numTaps / 2, output_array, numOutputFrames, ratio);
+    res.output_generated += fres.output_generated;
+
+    for (int c = 0; c < cxt->numChannels; ++c)
+        free (fbuffers [c]);
+
+    return res;
+}
+
+ResampleResult resampleProcessAndFlushInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
+{
+    ResampleResult res = { 0, 0 }, fres;
+    float *fbuffer;
+
+    if (input && numInputFrames) {
+        res = resampleProcessInterleaved (cxt, input, numInputFrames, output, numOutputFrames, ratio);
+
+        // if we didn't consume all the input or ran out of output space, we're finished
+        // (and this is obviously an unforced error, but the caller will have to sort that out)
+
+        if ((numInputFrames -= res.input_used) != 0 || (numOutputFrames -= res.output_generated) == 0)
+            return res;
+
+        output += res.output_generated * cxt->numChannels;
+    }
+
+    fbuffer = calloc (sizeof (float) * cxt->numChannels, cxt->numTaps / 2);
+    fres = resampleProcessInterleaved (cxt, fbuffer, cxt->numTaps / 2, output, numOutputFrames, ratio);
+    res.output_generated += fres.output_generated;
+    free (fbuffer);
+
+    return res;
+}
+
 #ifdef ENABLE_THREADS
 
 // This is the resampler processing function to process a single channel. It can be called directly or called from
