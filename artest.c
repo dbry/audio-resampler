@@ -103,9 +103,9 @@ char *display_stats (Stats *stats)
 
 int main (int argc, char **argv)
 {
-    int inbuffer_samples = 4096, outbuffer_samples = 0, invbuffer_samples = 0, rembuffer_samples = 0;
-    int read_stdin = 0, write_stdout = 0, exact = 0, non_interleaved = 0, inv_resample = 0, buffers;
+    int inbuffer_samples = 4096, outbuffer_samples = 0, invbuffer_samples = 0, rembuffer_samples = 0, max_rembuffer_samples = 0;
     int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, multithreading = 0, fades = 1, separate_flush = 0;
+    int read_stdin = 0, write_stdout = 0, exact = 0, non_interleaved = 0, inv_resample = 0, buffers;
     int chans = 2, taps = 256, filters = 320, seconds = 60, outbits = 32, outbytes = 4;
     float *inbuffer = NULL, *outbuffer = NULL, *invbuffer = NULL, *rembuffer = NULL;
     int source_rate = 0, destin_rate = 0, lowpass_freq = 0;
@@ -350,7 +350,6 @@ int main (int argc, char **argv)
         invbuffer_samples = floor ((outbuffer_samples + taps / 2) / ratio + 10);
         invbuffer = malloc (invbuffer_samples * chans * sizeof (float));
         inv_ratio = (double) source_rate / destin_rate;
-        rembuffer = malloc (inbuffer_samples * chans * sizeof (float));
     }
 
     if (ratio != 1.0 || lowpass_freq) {
@@ -528,28 +527,43 @@ int main (int argc, char **argv)
             if (write_stdout == 4)
                 fwrite (invbuffer, sizeof (float) * chans, inv_res.output_generated, stdout);
 
+            int next_rembuffer_samples = rembuffer_samples + inbuffer_samples - inv_res.output_generated;
+
+            if (next_rembuffer_samples > max_rembuffer_samples) {
+                rembuffer = realloc (rembuffer, next_rembuffer_samples * chans * sizeof (float));
+                max_rembuffer_samples = next_rembuffer_samples;
+            }
+
+            int rembuffer_diff_count = 0, inbuffer_diff_count = 0, rembuffer_move_count = 0, inbuffer_move_count = 0;
+            float *rembuffer_src_ptr = rembuffer;
+            float *rembuffer_dst_ptr = rembuffer;
             float *invbuffer_ptr = invbuffer;
-            float *rembuffer_ptr = rembuffer;
             float *inbuffer_ptr = inbuffer;
 
-            int rembuffer_count = rembuffer_samples * chans;
-            int diff_count = (inv_res.output_generated - rembuffer_samples) * chans;
+            if (inv_res.output_generated >= rembuffer_samples) {
+                rembuffer_diff_count = rembuffer_samples * chans;
+                inbuffer_diff_count = (inv_res.output_generated - rembuffer_samples) * chans;
+                inbuffer_move_count = next_rembuffer_samples * chans;
+            }
+            else {
+                rembuffer_diff_count = inv_res.output_generated * chans;
+                rembuffer_move_count = (rembuffer_samples - inv_res.output_generated) * chans;
+                inbuffer_move_count = inbuffer_samples * chans;
+            }
 
-            while (rembuffer_count--)
-                *invbuffer_ptr++ -= *rembuffer_ptr++;
+            while (rembuffer_diff_count--)
+                *invbuffer_ptr++ -= *rembuffer_src_ptr++;
 
-            while (diff_count--)
+            while (inbuffer_diff_count--)
                 *invbuffer_ptr++ -= *inbuffer_ptr++;
 
-            int next_rembuffer_samples = rembuffer_samples + inbuffer_samples - inv_res.output_generated;
-            int rem_count = next_rembuffer_samples * chans;
-            rembuffer_ptr = rembuffer;
+            while (rembuffer_move_count--)
+                *rembuffer_dst_ptr++ = *rembuffer_src_ptr++;
 
-            while (rem_count--)
-                *rembuffer_ptr++ = *inbuffer_ptr++;
+            while (inbuffer_move_count--)
+                *rembuffer_dst_ptr++ = *inbuffer_ptr++;
 
             rembuffer_samples = next_rembuffer_samples;
-
             update_stats (invbuffer, inv_res.output_generated, chans, &diff_stats);
 
             if (write_stdout == 5)
