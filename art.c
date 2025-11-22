@@ -18,7 +18,7 @@
 #include "stretch.h"
 #include "biquad.h"
 
-#define VERSION         0.5
+#define VERSION         0.6
 
 #define IS_BIG_ENDIAN (*(uint16_t *)"\0\xff" < 0x0100)
 
@@ -56,6 +56,9 @@ static const char *usage =
 "           -p          = pre/post filtering (cascaded biquads)\n"
 "           -q          = quiet mode (display errors only)\n"
 "           -v          = verbose (display lots of info)\n"
+#ifdef ENABLE_EXTRAPOLATION
+"           -x          = do not extrapolate audio samples at endpoints\n"
+#endif
 "           -y          = overwrite outfile if it exists\n\n"
 "           Using any of the following options will invoke the audio-stretch\n"
 "           functionality that, unlike regular resampling, can result in very\n"
@@ -71,7 +74,7 @@ static const char *usage =
 static int wav_process (char *infilename, char *outfilename);
 
 static int bh4_window, hann_window, num_taps = 256, num_filters = 320, outbits, verbosity, pre_post_filter, allpass, enable_threads;
-static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE;
+static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, extrapolation = 1;
 static double pitch_ratio = 1.0, tempo_ratio = 1.0;
 static unsigned long resample_rate, lowpass_freq;
 static double phase_shift, gain = 1.0;
@@ -173,6 +176,10 @@ int main (int argc, char **argv)
 
                     case 'V': case 'v':
                         verbosity = 1;
+                        break;
+
+                    case 'X': case 'x':
+                        extrapolation = 0;
                         break;
 
                     case 'Y': case 'y':
@@ -760,16 +767,16 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             stretcher = stretchInit (sample_rate / upper_frequency, sample_rate / lower_frequency, num_channels, stretch_flags);
             stretch_samples = stretchGetOutputCapacity (stretcher, BUFFER_SAMPLES, stretch_ratio);
             resample_buffer = stretch_buffer = malloc (stretch_samples * num_channels * sizeof (float));
-            outbuffer_samples = (int) floor (stretch_samples * sample_ratio * 1.1 + 100.0);
+            outbuffer_samples = (int) floor ((stretch_samples + num_taps / 2) * sample_ratio + 100.0);
 
             if (verbosity > 0)
                 fprintf (stderr, "audio stretch initialized with ratio %g\n", stretch_ratio);
         }
         else 
-            outbuffer_samples = (int) floor (BUFFER_SAMPLES * sample_ratio * 1.1 + 100.0);
+            outbuffer_samples = (int) floor ((BUFFER_SAMPLES + num_taps / 2) * sample_ratio + 100.0);
     }
     else 
-        outbuffer_samples = (int) floor (BUFFER_SAMPLES * sample_ratio * 1.1 + 100.0);
+        outbuffer_samples = (int) floor ((BUFFER_SAMPLES + num_taps / 2) * sample_ratio + 100.0);
 
     outbuffer = malloc (outbuffer_samples * num_channels * sizeof (float));
     target_output_samples = (unsigned long) floor ((double) num_samples * stretch_ratio * sample_ratio + 0.5);
@@ -790,6 +797,9 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
         if (allpass)
             flags &= ~INCLUDE_LOWPASS;
+
+        if (extrapolation)
+            flags |= EXTRAPOLATE_ENDPOINTS;
 
         resampler = resampleFixedRatioInit (num_channels, num_taps, num_filters, sample_rate * pitch_ratio, resample_rate, lowpass_freq, flags);
 
@@ -892,11 +902,6 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         samples_read = fread (readbuffer, num_channels * ((inbits + 7) / 8), samples_to_read, infile);
         remaining_samples -= samples_read;
 
-        if (!samples_read) {
-            memset (readbuffer, (inbits <= 8) * 128, BUFFER_SAMPLES * num_channels * ((inbits + 7) / 8));
-            samples_read = BUFFER_SAMPLES;
-        }
-
         if (inbits > 24) {
             if (IS_BIG_ENDIAN) {
                 unsigned char *bptr = (unsigned char *) inbuffer, word [4];
@@ -922,9 +927,14 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
         // common code to process the audio in 32-bit floats
         // first step is any audio stretching, which is done into stretch_buffer
+        // we flush the stretcher if no samples were read
 
-        if (stretcher)
-            samples_read = stretchProcess (stretcher, inbuffer, samples_read, stretch_buffer, stretch_ratio);
+        if (stretcher) {
+            if (!samples_read)
+                samples_read = stretchFlush (stretcher, stretch_buffer);
+            else
+                samples_read = stretchProcess (stretcher, inbuffer, samples_read, stretch_buffer, stretch_ratio);
+        }
 
         // then any pre-filtering, which is done inline
 
@@ -937,14 +947,34 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         }
 
         // next is the actual re-sampling, which is done into the output buffer
+        // if we have no new samples (either read or from the stretcher) then we flush the resampler
 
         if (resampler) {
-            res = resampleProcessInterleaved (resampler, resample_buffer, samples_read, outbuffer, outbuffer_samples, sample_ratio);
+            res = resampleProcessInterleaved (resampler, resample_buffer, samples_read ? samples_read : -1, outbuffer, outbuffer_samples, sample_ratio);
             samples_generated = res.output_generated;
+
+            if (samples_generated == outbuffer_samples) {
+                fprintf (stderr, "fatal error: outputbuffer too small!\n");
+                exit (1);
+            }
         }
         else {
             memcpy (outbuffer, resample_buffer, samples_read * num_channels * sizeof (float));
             samples_generated = samples_read;
+        }
+
+        // In some cases when using the stretcher we may come up short at the end even after flushing
+        // both the stretcher and the resampler. In those cases we pad the end with zeroes. Note that
+        // this cannot happen when just using the resampler because it always rounds the output count
+        // up (i.e., ceil) and our target output is rounded to nearest.
+
+        if (!samples_read && !samples_generated && output_samples < target_output_samples) {
+            samples_generated = target_output_samples - output_samples;
+
+            if (samples_generated > outbuffer_samples)
+                samples_generated = outbuffer_samples;
+
+            memset (outbuffer, 0, samples_generated * num_channels * sizeof (float));
         }
 
         // final processing is any post-filtering, which is done inline
@@ -1007,6 +1037,9 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     free (inbuffer);
     free (lowpass1);
     free (lowpass2);
+
+    if (verbosity > 0)
+        fprintf (stderr, "info: %lu samples were generated\n", output_samples);
 
     if (clipped_samples)
         fprintf (stderr, "warning: %lu samples were clipped, suggest reducing gain!\n", clipped_samples);

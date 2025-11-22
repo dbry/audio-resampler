@@ -10,6 +10,10 @@
 
 #include "resampler.h"
 
+#ifdef ENABLE_EXTRAPOLATION
+#include "extrapolator.h"
+#endif
+
 static void init_filter (Resample *cxt, float *filter, double fraction);
 static double subsample (Resample *cxt, float *source, double offset);
 static unsigned long gcd (unsigned long a, unsigned long b);
@@ -63,6 +67,16 @@ static unsigned long gcd (unsigned long a, unsigned long b);
 //                                - might be slower depending on CPU, optimization, caching, etc.
 //                                - optional (define ENABLE_THREADS)
 //
+//
+//   EXTRAPOLATE_ENDPOINTS      enable sample extrapolation at the beginning and end of conversion
+//                                - to use this properly, the resampleAdvance() function must be
+//                                  called BEFORE sending any data to the resampler to delay the
+//                                  initial conversion (otherwise samples will be generated
+//                                  immediately when there aren't enough samples to extrapolate)
+//                                - also, the new "flush" functionality must be used instead of
+//                                  just sending zeros to the resampler to perform a final flush
+//                                  (although this should be obvious)
+//                                - optional (define ENABLE_EXTRAPOLATION)
 // Notes:
 //
 // 1. The same resampling instance can be used for upsampling, downsampling, or simple (near-unity)
@@ -145,6 +159,11 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
     cxt->outputOffset = numTaps / 2;
     cxt->inputIndex = numTaps;
 
+#ifdef ENABLE_EXTRAPOLATION
+    if (cxt->flags & EXTRAPOLATE_ENDPOINTS)
+        cxt->flags |= EXTRAPOLATE_PREFILL;
+#endif
+
 #ifdef ENABLE_THREADS
     if (numChannels > 1 && (flags & RESAMPLE_MULTITHREADED))
         cxt->workers = workersInit (numChannels);
@@ -226,6 +245,16 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 //                                - calculation is based on sample rates and filter length
 //                                - no lowpass is used for upsampling or near-unity resampling,
 //                                  but can always be enabled by setting the lowpassFreq directly
+//
+//   EXTRAPOLATE_ENDPOINTS      enable sample extrapolation at the beginning and end of conversion
+//                                - to use this properly, the resampleAdvance() function must be
+//                                  called BEFORE sending any data to the resampler to delay the
+//                                  initial conversion (otherwise samples will be generated
+//                                  immediately when there aren't enough samples to extrapolate)
+//                                - also, the new "flush" functionality must be used instead of
+//                                  just sending zeros to the resampler to perform a final flush
+//                                  (although this should be obvious)
+//                                - optional (define ENABLE_EXTRAPOLATION)
 //
 // Notes:
 //
@@ -323,6 +352,9 @@ void resampleReset (Resample *cxt)
 
     cxt->outputOffset = cxt->numTaps / 2;
     cxt->inputIndex = cxt->numTaps;
+
+    if (cxt->flags & EXTRAPOLATE_ENDPOINTS)
+        cxt->flags |= EXTRAPOLATE_PREFILL;
 }
 
 // Run the resampler context at the specified output ratio and return both the number of input
@@ -340,9 +372,23 @@ void resampleReset (Resample *cxt)
 //
 // If this resampler was created with the resampleFixedRatioInit() function, then the "ratio"
 // parameter is ignored and the originally specified conversion is performed.
+//
+// To perform a "flush" operation on the resampler, set the numInputFrames to -1 (the input
+// pointer can be NULL in this case). This flush is required to align the output of the
+// resampler, which is delayed by half the sinc filter width, with the input. Previously, this
+// flush alignment was forced by feeding the appropriate number of zeros into the resampler,
+// but now this can be accomplished explicitly, and more cleanly, this way. Also, if sample
+// extrapolation has been selected in the init call (with the EXTRAPOLATE_ENDPOINTS flag),
+// that is also performed during the flush.
 
 #ifdef ENABLE_THREADS
 static int resampleProcessChannelJob (void *ptr, void *sync_not_used);
+#endif
+
+#ifdef ENABLE_EXTRAPOLATION
+static void prefillAllChannels (Resample *cxt), postfillAllChannels (Resample *cxt);
+#else
+static void postfillAllChannels (Resample *cxt);
 #endif
 
 ResampleResult resampleProcess (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio)
@@ -360,7 +406,7 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
             Resample *wcxt = worker_contexts + ch;
 
             *wcxt = *cxt;
-            wcxt->input = input [ch] - 1;
+            if (input) wcxt->input = input [ch] - 1;
             wcxt->numInputFrames = numInputFrames;
             wcxt->output = output [ch] - 1;
             wcxt->numOutputFrames = numOutputFrames;
@@ -381,7 +427,7 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
         return res;
     }
     else if (cxt->numChannels == 1) {
-        cxt->input = input [0] - 1;
+        if (input) cxt->input = input [0] - 1;
         cxt->numInputFrames = numInputFrames;
         cxt->output = output [0] - 1;
         cxt->numOutputFrames = numOutputFrames;
@@ -399,6 +445,9 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
     int half_taps = cxt->numTaps / 2, i;
     ResampleResult res = { 0, 0 };
     double offset2 = 0.0;
+
+    if (numInputFrames < 0)             // this is where flush is handled
+        postfillAllChannels (cxt);
 
     while (numOutputFrames > 0) {
         if (cxt->outputOffset + offset2 >= cxt->inputIndex - half_taps) {
@@ -422,6 +471,13 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
                 break;
         }
         else {
+#ifdef ENABLE_EXTRAPOLATION
+            // if we are extrapolating backwards and haven't yet, now is the time
+            if (cxt->flags & EXTRAPOLATE_PREFILL) {
+                cxt->flags &= ~EXTRAPOLATE_PREFILL;
+                prefillAllChannels (cxt);
+            }
+#endif
             for (i = 0; i < cxt->numChannels; ++i)
                 output [i] [res.output_generated] = subsample (cxt, cxt->buffers [i], cxt->outputOffset + offset2);
 
@@ -499,6 +555,9 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, in
     ResampleResult res = { 0, 0 };
     double offset2 = 0.0;
 
+    if (numInputFrames < 0)             // this is where flush is handled
+        postfillAllChannels (cxt);
+
     while (numOutputFrames > 0) {
         if (cxt->outputOffset + offset2 >= cxt->inputIndex - half_taps) {
             if (numInputFrames > 0) {
@@ -521,6 +580,13 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, in
                 break;
         }
         else {
+#ifdef ENABLE_EXTRAPOLATION
+            // if we are extrapolating backwards and haven't yet, now is the time
+            if (cxt->flags & EXTRAPOLATE_PREFILL) {
+                cxt->flags &= ~EXTRAPOLATE_PREFILL;
+                prefillAllChannels (cxt);
+            }
+#endif
             for (i = 0; i < cxt->numChannels; ++i)
                 *output++ = subsample (cxt, cxt->buffers [i], cxt->outputOffset + offset2);
 
@@ -536,54 +602,79 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, in
 #endif
 }
 
-// These two functions are extensions of resampleProcess() and resampleProcessInterleaved() that additionally
-// perform a final "flush" operation on the specified resampler. Normally, during resampling, the output is
-// delayed from the input by half the width of the sinc filter. This is because the entire width of the filter
-// must be visible in the input data to be able to generate an output sample which is aligned to the center of
-// the filter. However, at the end of a conversion it's usually desirable to flush the extra data out of the
-// resampler so that the output will be exactly aligned to the input. Previously, this flush alignment was
-// forced by feeding the appropriate number of zeros into the resampler, but now these two functions can
-// accomplish the same thing more cleanly.
-//
-// There are two ways of using these functions. First, it's possble to just use them for the last block of
-// samples and the "flushed" samples will simply be appended to the generated output, with the total number
+// This is where we flush the resampler by simulating enough input (half the number of filter taps) to align
+// the output. We may fill with zeros, or extrapolate the most recent samples if that option is selected.
+
+static void postfillAllChannels (Resample *cxt)
+{
+    int c;
+
+    if (cxt->numSamples - cxt->inputIndex < cxt->numTaps / 2) {
+        for (c = 0; c < cxt->numChannels; ++c)
+            memmove (cxt->buffers [c], cxt->buffers [c] + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (float));
+
+        cxt->outputOffset -= cxt->numSamples - cxt->numTaps;
+        cxt->inputIndex -= cxt->numSamples - cxt->numTaps;
+    }
+
+    for (c = 0; c < cxt->numChannels; ++c) {
+        memset (cxt->buffers [c] + cxt->inputIndex, 0, (cxt->numSamples - cxt->inputIndex) * sizeof (float));
+#ifdef ENABLE_EXTRAPOLATION
+        if (cxt->flags & EXTRAPOLATE_ENDPOINTS)
+            extrapolate_forward (cxt->buffers [c] + cxt->inputIndex - cxt->numTaps / 2, cxt->numTaps / 2, cxt->numTaps / 2);
+#endif
+    }
+
+    cxt->inputIndex += cxt->numTaps / 2;
+}
+
+// Extrapolate the samples received so far back into the sample buffers.
+
+#ifdef ENABLE_EXTRAPOLATION
+
+static void prefillAllChannels (Resample *cxt)
+{
+    int num_samples = cxt->inputIndex - cxt->numTaps, c;
+
+    if (num_samples >= 8)
+        for (c = 0; c < cxt->numChannels; ++c)
+            extrapolate_reverse (cxt->buffers [c] + cxt->inputIndex, num_samples, cxt->numTaps - num_samples);
+}
+
+#endif
+
+// These two convenience functions are extensions of resampleProcess() and resampleProcessInterleaved() that
+// additionally perform the final "flush" operation on the specified resampler. Simply call them for the last
+// block of samples and the "flushed" samples will be appended to the generated output, with the total number
 // of samples generated still indicated by the "output_generated" field of the ResampleResult. Be sure to
 // have enough buffer space available.
 //
-// Alternatively, these functions can be used to only generate the "flushed" samples without providing any
-// additional input (for example when the last block is not known until after it's been resampled). This is
-// accomplished by simply calling the functions with the "input" pointer set to NULL and the numInputFrames
-// set to zero.
+// Using these is equivalent to calling the regular resampling functions with the final block to be resampled
+// and then calling them again with numInputFrames set to -1 to execute the flush. This simply combines the
+// two calls into one.
 
 ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio)
 {
-    float *output_array [cxt->numChannels], *fbuffers [cxt->numChannels];
+    float *output_array [cxt->numChannels];
     ResampleResult res = { 0, 0 }, fres;
+    int c;
 
-    for (int c = 0; c < cxt->numChannels; ++c)
+    for (c = 0; c < cxt->numChannels; ++c)
         output_array [c] = output [c];
 
-    if (input && numInputFrames) {
-        res = resampleProcess (cxt, input, numInputFrames, output_array, numOutputFrames, ratio);
+    res = resampleProcess (cxt, input, numInputFrames, output_array, numOutputFrames, ratio);
 
-        // if we didn't consume all the input or ran out of output space, we're finished
-        // (and this is obviously an unforced error, but the caller will have to sort that out)
+    // if we didn't consume all the input or ran out of output space, we're finished
+    // (and this is obviously an unforced error, but the caller will have to sort that out)
 
-        if ((numInputFrames -= res.input_used) != 0 || (numOutputFrames -= res.output_generated) == 0)
-            return res;
+    if ((numInputFrames -= res.input_used) != 0 || (numOutputFrames -= res.output_generated) == 0)
+        return res;
 
-        for (int c = 0; c < cxt->numChannels; ++c)
-            output_array [c] += res.output_generated;
-    }
+    for (c = 0; c < cxt->numChannels; ++c)
+        output_array [c] += res.output_generated;
 
-    for (int c = 0; c < cxt->numChannels; ++c)
-        fbuffers [c] = calloc (sizeof (float), cxt->numTaps / 2);
-
-    fres = resampleProcess (cxt, (const float * const *) fbuffers, cxt->numTaps / 2, output_array, numOutputFrames, ratio);
+    fres = resampleProcess (cxt, NULL, -1, output_array, numOutputFrames, ratio);
     res.output_generated += fres.output_generated;
-
-    for (int c = 0; c < cxt->numChannels; ++c)
-        free (fbuffers [c]);
 
     return res;
 }
@@ -591,24 +682,18 @@ ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input
 ResampleResult resampleProcessAndFlushInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
 {
     ResampleResult res = { 0, 0 }, fres;
-    float *fbuffer;
 
-    if (input && numInputFrames) {
-        res = resampleProcessInterleaved (cxt, input, numInputFrames, output, numOutputFrames, ratio);
+    res = resampleProcessInterleaved (cxt, input, numInputFrames, output, numOutputFrames, ratio);
 
-        // if we didn't consume all the input or ran out of output space, we're finished
-        // (and this is obviously an unforced error, but the caller will have to sort that out)
+    // if we didn't consume all the input or ran out of output space, we're finished
+    // (and this is obviously an unforced error, but the caller will have to sort that out)
 
-        if ((numInputFrames -= res.input_used) != 0 || (numOutputFrames -= res.output_generated) == 0)
-            return res;
+    if ((numInputFrames -= res.input_used) != 0 || (numOutputFrames -= res.output_generated) == 0)
+        return res;
 
-        output += res.output_generated * cxt->numChannels;
-    }
-
-    fbuffer = calloc (sizeof (float) * cxt->numChannels, cxt->numTaps / 2);
-    fres = resampleProcessInterleaved (cxt, fbuffer, cxt->numTaps / 2, output, numOutputFrames, ratio);
+    output += res.output_generated * cxt->numChannels;
+    fres = resampleProcessInterleaved (cxt, NULL, -1, output, numOutputFrames, ratio);
     res.output_generated += fres.output_generated;
-    free (fbuffer);
 
     return res;
 }
@@ -616,14 +701,34 @@ ResampleResult resampleProcessAndFlushInterleaved (Resample *cxt, const float *i
 #ifdef ENABLE_THREADS
 
 // This is the resampler processing function to process a single channel. It can be called directly or called from
-// a worker thread (see workers.c) and is used and is used for both interleaved and non-interleaved channels (see
-// "stride" argument in the context).
+// a worker thread (see workers.c) and is used for both interleaved and non-interleaved channels (see the "stride"
+// argument in the context).
 
 static int resampleProcessChannelJob (void *ptr, void *sync_not_used)
 {
     Resample *cxt = ptr;
     int half_taps = cxt->numTaps / 2;
     double offset2 = 0.0;
+
+    // This is where we flush the resampler by simulating enough input (half the number of filter taps) to align
+    // the output. We may fill with zeros, or extrapolate the most recent samples if that option is selected.
+
+    if (cxt->numInputFrames < 0) {
+        if (cxt->numSamples - cxt->inputIndex < cxt->numTaps / 2) {
+            memmove (cxt->cbuffer, cxt->cbuffer + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (float));
+            cxt->outputOffset -= cxt->numSamples - cxt->numTaps;
+            cxt->inputIndex -= cxt->numSamples - cxt->numTaps;
+        }
+
+        memset (cxt->cbuffer + cxt->inputIndex, 0, (cxt->numSamples - cxt->inputIndex) * sizeof (float));
+
+#ifdef ENABLE_EXTRAPOLATION
+        if (cxt->flags & EXTRAPOLATE_ENDPOINTS)
+            extrapolate_forward (cxt->cbuffer + cxt->inputIndex - cxt->numTaps / 2, cxt->numTaps / 2, cxt->numTaps / 2);
+#endif
+
+        cxt->inputIndex += cxt->numTaps / 2;
+    }
 
     while (cxt->numOutputFrames > 0) {
         if (cxt->outputOffset + offset2 >= cxt->inputIndex - half_taps) {
@@ -642,6 +747,17 @@ static int resampleProcessChannelJob (void *ptr, void *sync_not_used)
                 break;
         }
         else {
+#ifdef ENABLE_EXTRAPOLATION
+            // if we are extrapolating backwards and haven't yet, now is the time
+            if (cxt->flags & EXTRAPOLATE_PREFILL) {
+                int num_samples = cxt->inputIndex - cxt->numTaps;
+
+                if (num_samples >= 8)
+                    extrapolate_reverse (cxt->cbuffer + cxt->inputIndex, num_samples, cxt->numTaps - num_samples);
+
+                cxt->flags &= ~EXTRAPOLATE_PREFILL;
+            }
+#endif
             *(cxt->output += cxt->stride) = subsample (cxt, cxt->cbuffer, cxt->outputOffset + offset2);
             offset2 = ++(cxt->res.output_generated) / cxt->ratio;
             cxt->numOutputFrames--;

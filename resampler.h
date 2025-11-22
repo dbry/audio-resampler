@@ -24,6 +24,8 @@
 #define RESAMPLE_MULTITHREADED  0x8
 #define NO_FILTER_REDUCTION     0x10
 #define RESAMPLE_FIXED_RATIO    0x20    // internal use only, do not set
+#define EXTRAPOLATE_ENDPOINTS   0x40
+#define EXTRAPOLATE_PREFILL     0x80    // internal use only, do not set
 
 typedef struct {
     unsigned int input_used, output_generated;

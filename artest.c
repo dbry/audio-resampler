@@ -64,6 +64,9 @@ static const char *usage =
 #endif
 "           -i          = inverse-resample and compare to source\n"
 "           -a          = do not fade-in and fade-out audio endpoints\n"
+#ifdef ENABLE_EXTRAPOLATION
+"           -x          = extrapolate audio endpoints to reduce glitches\n"
+#endif
 "           -p          = separate final block from terminating flush\n"
 "           -v          = test non-interleaved versions (if they exist)\n"
 "           -o<bits>    = change output file bitdepth (4-24 or 32)\n\n";
@@ -186,7 +189,11 @@ int main (int argc, char **argv)
                     case 'v':
                         non_interleaved = 1;
                         break;
-
+#ifdef ENABLE_EXTRAPOLATION
+                    case 'x':
+                        flags |= EXTRAPOLATE_ENDPOINTS;
+                        break;
+#endif
                     case 'p':
                         separate_flush = 1;
                         break;
@@ -460,8 +467,8 @@ int main (int argc, char **argv)
 
             if (inbuffer_samples == res.input_used && outbuffer_samples > res.output_generated) {
                 ResampleResult fres = non_interleaved ?
-                    resampleProcessAndFlushInterleavedSimulator (resampler, NULL, 0, outbuffer + res.output_generated * chans, outbuffer_samples - res.output_generated, ratio):
-                    resampleProcessAndFlushInterleaved (resampler, NULL, 0, outbuffer + res.output_generated * chans, outbuffer_samples - res.output_generated, ratio);
+                    resampleProcessInterleavedSimulator (resampler, NULL, -1, outbuffer + res.output_generated * chans, outbuffer_samples - res.output_generated, ratio):
+                    resampleProcessInterleaved (resampler, NULL, -1, outbuffer + res.output_generated * chans, outbuffer_samples - res.output_generated, ratio);
 
                 res.output_generated += fres.output_generated;
             }
@@ -498,8 +505,8 @@ int main (int argc, char **argv)
 
                 if (res.output_generated == inv_res.input_used && invbuffer_samples > inv_res.output_generated) {
                     ResampleResult fres = non_interleaved ?
-                        resampleProcessAndFlushInterleavedSimulator (inv_resampler, NULL, 0, invbuffer + inv_res.output_generated * chans, invbuffer_samples - inv_res.output_generated, inv_ratio) :
-                        resampleProcessAndFlushInterleaved (inv_resampler, NULL, 0, invbuffer + inv_res.output_generated * chans, invbuffer_samples - inv_res.output_generated, inv_ratio);
+                        resampleProcessInterleavedSimulator (inv_resampler, NULL, -1, invbuffer + inv_res.output_generated * chans, invbuffer_samples - inv_res.output_generated, inv_ratio) :
+                        resampleProcessInterleaved (inv_resampler, NULL, -1, invbuffer + inv_res.output_generated * chans, invbuffer_samples - inv_res.output_generated, inv_ratio);
 
                     inv_res.output_generated += fres.output_generated;
                 }
@@ -515,7 +522,7 @@ int main (int argc, char **argv)
                 inv_res.output_generated = rembuffer_samples + inbuffer_samples;
             }
             else if (bi == buffers - 1 && inv_res.output_generated < rembuffer_samples + inbuffer_samples)
-                fprintf (stderr, "info: we generated %d fewer sample(s) on round-trip resample\n", inv_res.output_generated - (rembuffer_samples + inbuffer_samples));
+                fprintf (stderr, "info: we generated %d fewer sample(s) on round-trip resample\n", rembuffer_samples + inbuffer_samples - inv_res.output_generated);
 
             if (inv_res.input_used != res.output_generated || inv_res.output_generated == invbuffer_samples) {
                 fprintf (stderr, "fatal error in inverse resample results!\n");
@@ -593,6 +600,7 @@ int main (int argc, char **argv)
     resampleFree (inv_resampler);
     resampleFree (resampler);
     decimateFree (decimator);
+    free (rembuffer);
     free (outbuffer);
     free (invbuffer);
     free (inbuffer);
@@ -658,7 +666,7 @@ static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const 
     float *output_array [cxt->numChannels];
 
     for (int c = 0; c < cxt->numChannels; ++c) {
-        input_array [c] = malloc (numInputFrames * sizeof (float));
+        input_array [c] = input ? malloc (numInputFrames * sizeof (float)) : NULL;
         output_array [c] = malloc (numOutputFrames * sizeof (float));
     }
 
@@ -751,10 +759,10 @@ static void fill_buffer_with_tone (float *data, int count, int chans, double fre
     static double phase_angle;
     double chan_offset;
 
-    if (chans == 2)
-        chan_offset = M_PI / 2.0;
-    else if (chans > 2)
+    if (chans > 2)
         chan_offset = 2.0 * M_PI / chans;
+    else
+        chan_offset = M_PI / 2.0;
 
     while (count--) {
         *data++ = sin (phase_angle += 2 * M_PI * freq) * 0.5;
