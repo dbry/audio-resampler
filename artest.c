@@ -781,7 +781,7 @@ static void fade_in (float *data, int count)
         *data++ = 0.0;
 
     for (int i = 0; i < fcount; ++i)
-        *data++ *= (double) i / fcount;
+        *data++ *= (cos ((fcount - i) * M_PI / fcount) + 1.0) / 2.0;
 }
 
 static void fade_out (float *data, int count)
@@ -790,7 +790,7 @@ static void fade_out (float *data, int count)
     int fcount = count - zcount;
 
     for (int i = 0; i < fcount; ++i)
-        *data++ *= (double) (fcount - i) / fcount;
+        *data++ *= (cos (i * M_PI / fcount) + 1.0) / 2.0;
 
     for (int i = 0; i < zcount; ++i)
         *data++ = 0.0;
