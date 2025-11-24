@@ -16,6 +16,8 @@
 
 static void init_filter (Resample *cxt, float *filter, double fraction);
 static double subsample (Resample *cxt, float *source, double offset);
+static double apply_filter_precise (float *A, float *B, int num_taps);
+static double apply_filter (float *A, float *B, int num_taps);
 static unsigned long gcd (unsigned long a, unsigned long b);
 
 // There are now two functions to initialize a resampler context. The legacy version is for
@@ -77,6 +79,11 @@ static unsigned long gcd (unsigned long a, unsigned long b);
 //                                  just sending zeros to the resampler to perform a final flush
 //                                  (although this should be obvious)
 //                                - optional (define ENABLE_EXTRAPOLATION)
+//
+//   PRECISE_MATH_CONVOLVER     uses precise math in convolution (doubles, not floats)
+//                                - this can improve resampling quality, but just a few dB at best
+//                                - can result in significant performance hit on some platforms
+//                                - might be worth it, but generally not recommended
 // Notes:
 //
 // 1. The same resampling instance can be used for upsampling, downsampling, or simple (near-unity)
@@ -169,6 +176,12 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
         cxt->workers = workersInit (numChannels);
 #endif
 
+
+    if (cxt->flags & PRECISE_MATH_CONVOLVER)
+        cxt->apply_filter = apply_filter_precise;
+    else
+        cxt->apply_filter = apply_filter;
+
     return cxt;
 }
 
@@ -256,6 +269,10 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 //                                  (although this should be obvious)
 //                                - optional (define ENABLE_EXTRAPOLATION)
 //
+//   PRECISE_MATH_CONVOLVER     uses precise math in convolution (doubles, not floats)
+//                                - this can improve resampling quality, but just a few dB at best
+//                                - can result in significant performance hit on some platforms
+//                                - might be worth it, but generally not recommended
 // Notes:
 //
 // 1. The resampling instance created by this call can only be used to perform the specified
@@ -990,6 +1007,19 @@ static double apply_filter(float* A, float* B, int num_taps)
 }
 #endif
 
+// For the "precise" version the order is not important, so just letting the compiler
+// do all the parallelization generally works the best
+
+static double apply_filter_precise (float *A, float *B, int num_taps)
+{
+    double sum = 0.0;
+
+    do sum += (double) *A++ * *B++;
+    while (--num_taps);
+
+    return sum;
+}
+
 #ifndef M_PI
 #define M_PI 3.14159265358979324
 #endif
@@ -1048,7 +1078,7 @@ static double subsample_no_interpolate (Resample *cxt, float *source, double off
     if (!(cxt->flags & INCLUDE_LOWPASS) && !(fi % cxt->numFilters))
         return source [fi / cxt->numFilters];
 
-    return apply_filter (cxt->filters [fi], source - cxt->numTaps / 2 + 1, cxt->numTaps);
+    return cxt->apply_filter (cxt->filters [fi], source - cxt->numTaps / 2 + 1, cxt->numTaps);
 }
 
 static double subsample_interpolate (Resample *cxt, float *source, double offset)
@@ -1057,9 +1087,9 @@ static double subsample_interpolate (Resample *cxt, float *source, double offset
     int fi = (int) floor (frac *= cxt->numFilters);
 
     source += (int) floor (offset) - cxt->numTaps / 2 + 1;
-    sum = apply_filter (cxt->filters [fi], source, cxt->numTaps) * (1.0 - (frac -= fi));
+    sum = cxt->apply_filter (cxt->filters [fi], source, cxt->numTaps) * (1.0 - (frac -= fi));
 
-    return sum + apply_filter (cxt->filters [fi + 1], source, cxt->numTaps) * frac;
+    return sum + cxt->apply_filter (cxt->filters [fi + 1], source, cxt->numTaps) * frac;
 }
 
 static double subsample (Resample *cxt, float *source, double offset)

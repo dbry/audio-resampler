@@ -26,6 +26,7 @@
 #define RESAMPLE_FIXED_RATIO    0x20    // internal use only, do not set
 #define EXTRAPOLATE_ENDPOINTS   0x40
 #define EXTRAPOLATE_PREFILL     0x80    // internal use only, do not set
+#define PRECISE_MATH_CONVOLVER  0x100
 
 typedef struct {
     unsigned int input_used, output_generated;
@@ -34,6 +35,7 @@ typedef struct {
 typedef struct {
     int numChannels, numSamples, numFilters, numTaps, inputIndex, flags;
     double *tempFilter, outputOffset, fixedRatio, lowpassRatio;
+    double (*apply_filter)(float *A, float *B, int num_taps);
     float **buffers, **filters;
 
 #ifdef ENABLE_THREADS

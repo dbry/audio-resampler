@@ -67,7 +67,7 @@ static const char *usage =
 #ifdef ENABLE_EXTRAPOLATION
 "           -x          = extrapolate audio endpoints to reduce glitches\n"
 #endif
-"           -p          = separate final block from terminating flush\n"
+"           -p          = precise, use doubles not floats for convolution\n"
 "           -v          = test non-interleaved versions (if they exist)\n"
 "           -o<bits>    = change output file bitdepth (4-24 or 32)\n\n";
 
@@ -107,7 +107,7 @@ char *display_stats (Stats *stats)
 int main (int argc, char **argv)
 {
     int inbuffer_samples = 4096, outbuffer_samples = 0, invbuffer_samples = 0, rembuffer_samples = 0, max_rembuffer_samples = 0;
-    int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, multithreading = 0, fades = 1, separate_flush = 0;
+    int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, multithreading = 0, fades = 1;
     int read_stdin = 0, write_stdout = 0, exact = 0, non_interleaved = 0, inv_resample = 0, buffers;
     int chans = 2, taps = 256, filters = 320, seconds = 60, outbits = 32, outbytes = 4;
     float *inbuffer = NULL, *outbuffer = NULL, *invbuffer = NULL, *rembuffer = NULL;
@@ -195,7 +195,7 @@ int main (int argc, char **argv)
                         break;
 #endif
                     case 'p':
-                        separate_flush = 1;
+                        flags |= PRECISE_MATH_CONVOLVER;
                         break;
 #ifdef ENABLE_THREADS
                     case 'm':
@@ -460,19 +460,6 @@ int main (int argc, char **argv)
             res = non_interleaved ?
                 resampleProcessInterleavedSimulator (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio) :
                 resampleProcessInterleaved (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio);
-        else if (separate_flush) {
-            res = non_interleaved ?
-                resampleProcessInterleavedSimulator (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio) :
-                resampleProcessInterleaved (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio);
-
-            if (inbuffer_samples == res.input_used && outbuffer_samples > res.output_generated) {
-                ResampleResult fres = non_interleaved ?
-                    resampleProcessInterleavedSimulator (resampler, NULL, -1, outbuffer + res.output_generated * chans, outbuffer_samples - res.output_generated, ratio):
-                    resampleProcessInterleaved (resampler, NULL, -1, outbuffer + res.output_generated * chans, outbuffer_samples - res.output_generated, ratio);
-
-                res.output_generated += fres.output_generated;
-            }
-        }
         else
             res = non_interleaved ?
                 resampleProcessAndFlushInterleavedSimulator (resampler, inbuffer, inbuffer_samples, outbuffer, outbuffer_samples, ratio) :
@@ -497,19 +484,6 @@ int main (int argc, char **argv)
                 inv_res = non_interleaved ?
                     resampleProcessInterleavedSimulator (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio) :
                     resampleProcessInterleaved (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio);
-            }
-            else if (separate_flush) {
-                inv_res = non_interleaved ?
-                    resampleProcessInterleavedSimulator (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio) :
-                    resampleProcessInterleaved (inv_resampler, outbuffer, res.output_generated, invbuffer, invbuffer_samples, inv_ratio);
-
-                if (res.output_generated == inv_res.input_used && invbuffer_samples > inv_res.output_generated) {
-                    ResampleResult fres = non_interleaved ?
-                        resampleProcessInterleavedSimulator (inv_resampler, NULL, -1, invbuffer + inv_res.output_generated * chans, invbuffer_samples - inv_res.output_generated, inv_ratio) :
-                        resampleProcessInterleaved (inv_resampler, NULL, -1, invbuffer + inv_res.output_generated * chans, invbuffer_samples - inv_res.output_generated, inv_ratio);
-
-                    inv_res.output_generated += fres.output_generated;
-                }
             }
             else
                 inv_res = non_interleaved ?
