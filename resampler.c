@@ -299,9 +299,10 @@ Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, 
     }
 
     // this is where we calculate an optimized lowpass ratio for the specified rates and filter length
+    // current target is around 98 dB attenuation at the Nyquist frequency, assuming a long enough filter
 
     if (!lowpassFreq && (flags & INCLUDE_LOWPASS) && destinRate < sourceRate) {
-        lowpassRatio = 1.0 - (1024.0 / numTaps) / (200.0 * resampleRatio);
+        lowpassRatio = 1.0 - (7.5 / numTaps / resampleRatio);
 
         if (lowpassRatio < 0.8)
             lowpassRatio = 0.8;
