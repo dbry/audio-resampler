@@ -26,7 +26,7 @@
 #define RESAMPLE_FIXED_RATIO    0x20    // internal use only, do not set
 #define EXTRAPOLATE_ENDPOINTS   0x40
 #define EXTRAPOLATE_PREFILL     0x80    // internal use only, do not set
-#define PRECISE_MATH_CONVOLVER  0x100
+#define EXTEND_CONVOLUTION_MATH 0x100
 
 typedef struct {
     unsigned int input_used, output_generated;

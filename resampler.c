@@ -80,7 +80,7 @@ static unsigned long gcd (unsigned long a, unsigned long b);
 //                                  (although this should be obvious)
 //                                - optional (define ENABLE_EXTRAPOLATION)
 //
-//   PRECISE_MATH_CONVOLVER     uses precise math in convolution (doubles, not floats)
+//   EXTEND_CONVOLUTION_MATH    use precise math in convolution (doubles, not floats)
 //                                - this can improve resampling quality, but just a few dB at best
 //                                - can result in significant performance hit on some platforms
 //                                - might be worth it, but generally not recommended
@@ -177,7 +177,7 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 #endif
 
 
-    if (cxt->flags & PRECISE_MATH_CONVOLVER)
+    if (cxt->flags & EXTEND_CONVOLUTION_MATH)
         cxt->apply_filter = apply_filter_precise;
     else
         cxt->apply_filter = apply_filter;
@@ -269,7 +269,7 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 //                                  (although this should be obvious)
 //                                - optional (define ENABLE_EXTRAPOLATION)
 //
-//   PRECISE_MATH_CONVOLVER     uses precise math in convolution (doubles, not floats)
+//   EXTEND_CONVOLUTION_MATH    use precise math in convolution (doubles, not floats)
 //                                - this can improve resampling quality, but just a few dB at best
 //                                - can result in significant performance hit on some platforms
 //                                - might be worth it, but generally not recommended

@@ -46,8 +46,8 @@ static const char *usage =
 "                          (follow rate with 'k' for kHz)\n"
 "           -l<Hz>      = lowpass frequency in Hz\n"
 "                          (follow rate with 'k' for kHz)\n"
-"           -f<num>     = number of sinc filters (1-1024, default 320)\n"
-"           -t<num>     = number of sinc taps (4-1024, default 256)\n"
+"           -f<num>     = number of sinc filters (1-1024, default 380)\n"
+"           -t<num>     = number of sinc taps (4-1024, default 380)\n"
 "           -o<bits>    = change output file bitdepth (4-24)\n"
 #ifdef FIXED_RATIO
 "           -e          = calc exact filters / no interpolation\n"
@@ -109,7 +109,7 @@ int main (int argc, char **argv)
     int inbuffer_samples = 4096, outbuffer_samples = 0, invbuffer_samples = 0, rembuffer_samples = 0, max_rembuffer_samples = 0;
     int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, multithreading = 0, fades = 1;
     int read_stdin = 0, write_stdout = 0, exact = 0, non_interleaved = 0, inv_resample = 0, buffers;
-    int chans = 2, taps = 256, filters = 320, seconds = 60, outbits = 32, outbytes = 4;
+    int chans = 2, taps = 380, filters = 380, seconds = 60, outbits = 32, outbytes = 4;
     float *inbuffer = NULL, *outbuffer = NULL, *invbuffer = NULL, *rembuffer = NULL;
     int source_rate = 0, destin_rate = 0, lowpass_freq = 0;
     int flags = BLACKMAN_HARRIS | SUBSAMPLE_INTERPOLATE;
@@ -143,20 +143,20 @@ int main (int argc, char **argv)
                 switch (**argv) {
 
                     case '1':
-                        filters = taps = 16;
+                        filters = taps = 48;
                         break;
 
                     case '2':
-                        filters = taps = 64;
+                        filters = 320;
+                        taps = 156;
                         break;
 
                     case '3':
-                        filters = 320;      // hack to allow optimized 44.1k --> 96k at default quality
-                        taps = 256;
+                        filters = taps = 380;
                         break;
 
                     case '4':
-                        filters = taps = 1024;
+                        filters = taps = 988;
                         break;
 
                     case 'a':
@@ -195,7 +195,7 @@ int main (int argc, char **argv)
                         break;
 #endif
                     case 'p':
-                        flags |= PRECISE_MATH_CONVOLVER;
+                        flags |= EXTEND_CONVOLUTION_MATH;
                         break;
 #ifdef ENABLE_THREADS
                     case 'm':

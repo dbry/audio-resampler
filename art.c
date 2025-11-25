@@ -53,11 +53,12 @@ static const char *usage =
 #ifdef ENABLE_THREADS
 "           -m          = use multithreading on stereo & multichannel files\n"
 #endif
+"           -e          = extended math resolution for convolution (slow)\n"
 "           -p          = pre/post filtering (cascaded biquads)\n"
 "           -q          = quiet mode (display errors only)\n"
 "           -v          = verbose (display lots of info)\n"
 #ifdef ENABLE_EXTRAPOLATION
-"           -x          = do not extrapolate audio samples at endpoints\n"
+"           -x          = do NOT extrapolate audio samples at endpoints\n"
 #endif
 "           -y          = overwrite outfile if it exists\n\n"
 "           Using any of the following options will invoke the audio-stretch\n"
@@ -73,8 +74,8 @@ static const char *usage =
 
 static int wav_process (char *infilename, char *outfilename);
 
-static int bh4_window, hann_window, num_taps = 256, num_filters = 320, outbits, verbosity, pre_post_filter, allpass, enable_threads;
-static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, extrapolation = 1;
+static int bh4_window, hann_window, num_taps = 380, num_filters = 380, outbits, verbosity, pre_post_filter, allpass, enable_threads;
+static int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, extrapolation = 1, extended_math = 0;
 static double pitch_ratio = 1.0, tempo_ratio = 1.0;
 static unsigned long resample_rate, lowpass_freq;
 static double phase_shift, gain = 1.0;
@@ -142,20 +143,20 @@ int main (int argc, char **argv)
                 switch (**argv) {
 
                     case '1':
-                        num_filters = num_taps = 16;
+                        num_filters = num_taps = 48;
                         break;
 
                     case '2':
-                        num_filters = num_taps = 64;
+                        num_filters = 320;
+                        num_taps = 156;
                         break;
 
                     case '3':
-                        num_filters = 320;      // hack to allow optimized 44.1k --> 96k at default quality
-                        num_taps = 256;
+                        num_filters = num_taps = 380;
                         break;
 
                     case '4':
-                        num_filters = num_taps = 1024;
+                        num_filters = num_taps = 988;
                         break;
 
                     case 'A': case 'a':
@@ -176,6 +177,10 @@ int main (int argc, char **argv)
 
                     case 'V': case 'v':
                         verbosity = 1;
+                        break;
+
+                    case 'E': case 'e':
+                        extended_math = 1;
                         break;
 
                     case 'X': case 'x':
@@ -800,6 +805,9 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
         if (extrapolation)
             flags |= EXTRAPOLATE_ENDPOINTS;
+
+        if (extended_math)
+            flags |= EXTEND_CONVOLUTION_MATH;
 
         resampler = resampleFixedRatioInit (num_channels, num_taps, num_filters, sample_rate * pitch_ratio, resample_rate, lowpass_freq, flags);
 
