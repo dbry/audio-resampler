@@ -13,6 +13,11 @@
 #include <ctype.h>
 #include <math.h>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #include "resampler.h"
 #include "decimator.h"
 #include "stretch.h"
@@ -346,6 +351,11 @@ int main (int argc, char **argv)
         fprintf (stderr, "\nspecify lowpass frequency, auto lowpass can only be used with exact resampling (-e)!\n\n");
         exit (1);
     }
+
+#if defined(_WIN32)
+        _setmode (_fileno (stdout), O_BINARY);
+        _setmode (_fileno (stdin), O_BINARY);
+#endif
 
     ratio = (double) destin_rate / source_rate;
     outbuffer_samples = floor ((inbuffer_samples + taps / 2) * ratio + 10);
