@@ -29,16 +29,18 @@ the sinc filters and serve as a starting point for experimentation:
 
 Preset|Number of sinc filters|Number of taps per filter|RAM use (stereo)
 ------|----------------------|-------------------------|----------------
--1    |       16             |            16           | 3.4 Kbytes
--2    |       64             |            64           | 25.3 Kbytes
--3    |      320             |           256           | 358 Kbytes
--4    |     1024             |          1024           | 4244 Kbytes
+-1    |       48             |            48           | 16 Kbytes
+-2    |      320             |           156           | 219 Kbytes
+-3    |      380             |           380           | 620 Kbytes
+-4    |      988             |           988           | 3956 Kbytes
 
 Preset **-3** is the default and is a reasonable compromise for high-quality resampling on a PC. Presets **-1**
 and **-2** are more suited for realtime use on embedded systems and **-4** represents the highest quality
 available for this tool.
 
-[Infinite Wave](https://infinitewave.ca/) has a very useful site comparing the audio performance of various sample rate converters and now includes this resampler utilizing presets **-2**, **-3**, and **-4**. [Here's the comparison of **ART** preset **-2** and preset **-4**](https://src.infinitewave.ca/?Top=ART_Preset2&Bot=ART_Preset4&Spec=0100), and you can scroll through to many other converters to see that **ART** is competetive in quality with virtually anything out there.
+[Infinite Wave](https://infinitewave.ca/) had a very useful site comparing the audio performance of various sample
+rate converters but for political reasons is no longer available to viewers in the USA, so I unfortunately can no
+longer recommend it.
 
 **ART** supports integer samples from 4-bits to 24-bits, as well as 32-bit floating-point samples. Any
 number of channels are supported. Normally the output bitdepth is set to the same as the input file, however
@@ -98,17 +100,25 @@ Since this API has access to the actual sample rates, it can also automatically 
 for downsampling operations. Optional multithreading has been implemented to further improve the speed of
 stereo and multichannel conversions, and a new benchmarking tool has been added.
  
+**Version 0.6** includes endpoint extrapolation that eliminates or reduces the glitches that can occur
+when consecutive files that contain audio all the way to the endpoints (i.e., gapless) are resampled
+separately and then rejoined. To accommodate this, a new method is provided to "flush" the resampler
+to align the output with the input (this used to be done by sending zeros to the resampler when done,
+but obviously that can no longer work). Provisions were also added to the **ARTEST** tool to verify the
+extrapolation. The presets were adjusted (most for higher quality) and a new option for performing the
+convolution with extended precision math (doubles instead of floats) was added that can provide several
+dB of improved quality (although this could be significantly slower on some platforms.
+
 
 ## Building
 
-To build an optimized version of the command-line tool (**ART**) on Linux or OS-X:
-
-> $ gcc -O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math -DENABLE_THREADS art.c stretch.c resampler.c decimator.c workers.c biquad.c -lm -pthread -o art
+A very simple Makefile is now provided for building the **ART** command-line tool and the **ARTEST** benchmarking
+tool. It is hardcoded for an optimized build on Intel PCs, but can easily be edited for other architectures.
 
 The "help" display from the command-line app:
 
 ```
- ART  Audio Resampling Tool  Version 0.5
+ ART  Audio Resampling Tool  Version 0.6
  Copyright (c) 2006 - 2025 David Bryant.
 
  Usage:     ART [-options] infile.wav outfile.wav
@@ -136,9 +146,11 @@ The "help" display from the command-line app:
            -b          = Blackman-Harris windowing (best stopband)
            -h          = Hann windowing (fastest transition)
            -m          = use multithreading on stereo & multichannel files
+           -e          = extended math resolution for convolution (slow)
            -p          = pre/post filtering (cascaded biquads)
            -q          = quiet mode (display errors only)
            -v          = verbose (display lots of info)
+           -x          = do NOT extrapolate audio samples at endpoints
            -y          = overwrite outfile if it exists
 
            Using any of the following options will invoke the audio-stretch
@@ -153,15 +165,15 @@ The "help" display from the command-line app:
                                  (absolute or +/-relative to source)
 
  Web:       Visit www.github.com/dbry/audio-resampler for latest version and info
-
 ```
 
 ## Caveats
 
-- The resampling engine is a single C file, with another C file for the biquad filters (now 4th-order)
-and another for the decimation. Don't expect the quality and performance of more advanced libraries,
-but also don't expect much difficulty integrating it. The simplicity and flexibility of this code
-might make it appealing for many applications, especially on limited-resource systems.
+- The resampling engine is a single C file, with another C file for the biquad filters (now 4th-order),
+another for the decimation and one for the extrapolation. Don't expect the quality and performance of
+more advanced libraries utilizing multi-stage filters, but also don't expect much difficulty integrating
+it. The simplicity and flexibility of this code might make it appealing for many applications, especially
+on limited-resource systems.
 - In the command-line program, unknown RIFF chunk types are correctly parsed on input files, but are
 *not* passed to the output file, and pipes are not supported.
 - The command-line program is not very restrictive about the option parameters, so it's very easy to
