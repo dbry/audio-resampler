@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <ctype.h>
+#define _USE_MATH_DEFINES
 #include <math.h>
 
 #ifdef _WIN32
@@ -611,8 +612,8 @@ int main (int argc, char **argv)
 
 static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *input, int numInputFrames, unsigned char *output)
 {
-    float *input_array [cxt->numChannels];
-    unsigned char *output_array [cxt->numChannels];
+    float **input_array = calloc (sizeof (float*), cxt->numChannels);
+    unsigned char **output_array = calloc (sizeof (unsigned char*), cxt->numChannels);
 
     for (int c = 0; c < cxt->numChannels; ++c) {
         input_array [c] = malloc (numInputFrames * sizeof (float));
@@ -638,6 +639,9 @@ static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *in
         free (output_array [c]);
     }
 
+    free (input_array);
+    free (output_array);
+
     return res;
 }
 
@@ -646,8 +650,8 @@ static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *in
 
 static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
 {
-    float *input_array [cxt->numChannels];
-    float *output_array [cxt->numChannels];
+    float **input_array = calloc (sizeof (float*), cxt->numChannels);
+    float **output_array = calloc (sizeof (float*), cxt->numChannels);
 
     for (int c = 0; c < cxt->numChannels; ++c) {
         input_array [c] = input ? malloc (numInputFrames * sizeof (float)) : NULL;
@@ -668,6 +672,9 @@ static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const 
         free (input_array [c]);
         free (output_array [c]);
     }
+
+    free (input_array);
+    free (output_array);
 
     return res;
 }
@@ -696,8 +703,8 @@ static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const 
 
 static ResampleResult resampleProcessAndFlushInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
 {
-    float *input_array [cxt->numChannels];
-    float *output_array [cxt->numChannels];
+    float **input_array = calloc (sizeof (float*), cxt->numChannels);
+    float **output_array = calloc (sizeof (float*), cxt->numChannels);
 
     for (int c = 0; c < cxt->numChannels; ++c) {
         input_array [c] = malloc (numInputFrames * sizeof (float));
@@ -718,6 +725,9 @@ static ResampleResult resampleProcessAndFlushInterleavedSimulator (Resample *cxt
         free (input_array [c]);
         free (output_array [c]);
     }
+
+    free (input_array);
+    free (output_array);
 
     return res;
 }

@@ -673,7 +673,7 @@ static void prefillAllChannels (Resample *cxt)
 
 ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio)
 {
-    float *output_array [cxt->numChannels];
+    float **output_array = calloc (sizeof (float*), cxt->numChannels);
     ResampleResult res = { 0, 0 }, fres;
     int c;
 
@@ -685,8 +685,10 @@ ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input
     // if we didn't consume all the input or ran out of output space, we're finished
     // (and this is obviously an unforced error, but the caller will have to sort that out)
 
-    if ((numInputFrames -= res.input_used) != 0 || (numOutputFrames -= res.output_generated) == 0)
+    if ((numInputFrames -= res.input_used) != 0 || (numOutputFrames -= res.output_generated) == 0) {
+        free (output_array);
         return res;
+    }
 
     for (c = 0; c < cxt->numChannels; ++c)
         output_array [c] += res.output_generated;
@@ -694,6 +696,7 @@ ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input
     fres = resampleProcess (cxt, NULL, -1, output_array, numOutputFrames, ratio);
     res.output_generated += fres.output_generated;
 
+    free (output_array);
     return res;
 }
 
@@ -1019,10 +1022,6 @@ static double apply_filter_precise (float *A, float *B, int num_taps)
 
     return sum;
 }
-
-#ifndef M_PI
-#define M_PI 3.14159265358979324
-#endif
 
 static void init_filter (Resample *cxt, float *filter, double fraction)
 {

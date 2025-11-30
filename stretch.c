@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <float.h>
+#define _USE_MATH_DEFINES
 #include <math.h>
 
 #include "stretch.h"
@@ -467,10 +468,6 @@ static int find_period (const Stretch *cxt, float *samples)
  * can reduce the time by a factor approaching 4x. The correlation results on either
  * side of the peak are compared to calculate a more accurate center of the period.
  */
-
-#ifndef M_E
-#define M_E		2.7182818284590452354	/* e */
-#endif
 
 static int find_period_fast (const Stretch *cxt, const float *samples)
 {

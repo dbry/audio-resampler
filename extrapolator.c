@@ -233,7 +233,8 @@ static double calc_lpc_coeffs (const float *values, int nvalues, float *coeffs, 
 
 static void lpc_to_parcor (const double *lpc, double *parcor, int ncoeffs)
 {
-    double temp_lpc [ncoeffs], next_lpc [ncoeffs];
+    double *temp_lpc = calloc (sizeof (double), ncoeffs);
+    double *next_lpc = calloc (sizeof (double), ncoeffs);
 
     for (int i = 0; i < ncoeffs; ++i)
         temp_lpc [i] = lpc [i];
@@ -257,6 +258,9 @@ static void lpc_to_parcor (const double *lpc, double *parcor, int ncoeffs)
                 temp_lpc [i] = next_lpc [i];
         }
     }
+
+    free (temp_lpc);
+    free (next_lpc);
 }
 
 // Function to convert PARCOR coefficients to LPC coefficients

@@ -10,10 +10,6 @@
 
 #include "biquad.h"
 
-#ifndef M_PI
-#define M_PI 3.14159265358979324
-#endif
-
 // This module implements biquad-like filters from first-order to fourth-order.
 // Of course, technically, "biquads" are second-order, but they're all similar.
 
