@@ -28,6 +28,7 @@
 #define EXTRAPOLATE_ENDPOINTS   0x40
 #define EXTRAPOLATE_PREFILL     0x80    // internal use only, do not set
 #define EXTEND_CONVOLUTION_MATH 0x100
+#define RESAMPLER_FLUSHED       0x200   // internal use only, do not set
 
 typedef struct {
     unsigned int input_used, output_generated;

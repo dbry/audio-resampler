@@ -176,7 +176,6 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
         cxt->workers = workersInit (numChannels);
 #endif
 
-
     if (cxt->flags & EXTEND_CONVOLUTION_MATH)
         cxt->apply_filter = apply_filter_precise;
     else
@@ -373,6 +372,8 @@ void resampleReset (Resample *cxt)
 
     if (cxt->flags & EXTRAPOLATE_ENDPOINTS)
         cxt->flags |= EXTRAPOLATE_PREFILL;
+
+    cxt->flags &= ~RESAMPLER_FLUSHED;       // resampler can now be used again after flush
 }
 
 // Run the resampler context at the specified output ratio and return both the number of input
@@ -411,8 +412,11 @@ static void postfillAllChannels (Resample *cxt);
 
 ResampleResult resampleProcess (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio)
 {
-    if (cxt->flags & RESAMPLE_FIXED_RATIO)
+    if (cxt->flags & RESAMPLE_FIXED_RATIO)  // override any supplied ratio if doing fixed ratio resampling
         ratio = cxt->fixedRatio;
+
+    if (cxt->flags & RESAMPLER_FLUSHED)     // ignore new input after flush but before reset
+        numInputFrames = 0;
 
 #ifdef ENABLE_THREADS
     if (cxt->workers) {
@@ -520,8 +524,11 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
 
 ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
 {
-    if (cxt->flags & RESAMPLE_FIXED_RATIO)
+    if (cxt->flags & RESAMPLE_FIXED_RATIO)  // override any supplied ratio if doing fixed ratio resampling
         ratio = cxt->fixedRatio;
+
+    if (cxt->flags & RESAMPLER_FLUSHED)     // ignore new input after flush but before reset
+        numInputFrames = 0;
 
 #ifdef ENABLE_THREADS
     if (cxt->workers) {
@@ -643,6 +650,7 @@ static void postfillAllChannels (Resample *cxt)
 #endif
     }
 
+    cxt->flags |= RESAMPLER_FLUSHED;
     cxt->inputIndex += cxt->numTaps / 2;
 }
 
@@ -748,6 +756,7 @@ static int resampleProcessChannelJob (void *ptr, void *sync_not_used)
             extrapolate_forward (cxt->cbuffer + cxt->inputIndex - cxt->numTaps / 2, cxt->numTaps / 2, cxt->numTaps / 2);
 #endif
 
+        cxt->flags |= RESAMPLER_FLUSHED;
         cxt->inputIndex += cxt->numTaps / 2;
     }
 
@@ -813,7 +822,7 @@ unsigned int resampleGetRequiredSamples (Resample *cxt, int numOutputFrames, dou
     double offset = cxt->outputOffset;
     ResampleResult res = { 0, 0 };
 
-    if (cxt->flags & RESAMPLE_FIXED_RATIO)
+    if (cxt->flags & RESAMPLE_FIXED_RATIO)  // override any supplied ratio if doing fixed ratio resampling
         ratio = cxt->fixedRatio;
 
     while (numOutputFrames > 0) {
@@ -842,8 +851,13 @@ unsigned int resampleGetExpectedOutput (Resample *cxt, int numInputFrames, doubl
     double offset = cxt->outputOffset;
     ResampleResult res = { 0, 0 };
 
-    if (cxt->flags & RESAMPLE_FIXED_RATIO)
+    if (cxt->flags & RESAMPLE_FIXED_RATIO)  // override any supplied ratio if doing fixed ratio resampling
         ratio = cxt->fixedRatio;
+
+    if (cxt->flags & RESAMPLER_FLUSHED)     // ignore new input after flush but before reset
+        numInputFrames = 0;
+    else if (numInputFrames < 0)            // also check for this being a flush
+        input_index += half_taps;
 
     while (1) {
         if (offset >= input_index - half_taps) {
