@@ -18,6 +18,12 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+typedef double artsample_t;
+#else
+typedef float artsample_t;
+#endif
+
 #ifndef NCOEFFS
 #define NCOEFFS 4
 #endif
@@ -30,8 +36,8 @@
 extern "C" {
 #endif
 
-double extrapolate_forward (float *values, int nvalues, int num_to_extrapolate);
-double extrapolate_reverse (float *values, int nvalues, int num_to_extrapolate);
+double extrapolate_forward (artsample_t *values, int nvalues, int num_to_extrapolate);
+double extrapolate_reverse (artsample_t *values, int nvalues, int num_to_extrapolate);
 
 #ifdef __cplusplus
 }

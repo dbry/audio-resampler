@@ -23,9 +23,9 @@
 //
 // see https://wiki.hydrogenaud.io/index.php?title=Noise_shaping
 
-static void shaper_init (Biquad *f, float a0, float a1, float a2, float a3, float a4, float b1, float b2, float b3, float b4);
+static void shaper_init (Biquad *f, double a0, double a1, double a2, double a3, double a4, double b1, double b2, double b3, double b4);
 
-Decimate *decimateInit (int numChannels, int outputBits, int outputBytes, float outputGain, int sampleRate, int flags)
+Decimate *decimateInit (int numChannels, int outputBits, int outputBytes, double outputGain, int sampleRate, int flags)
 {
     Decimate *cxt = calloc (1, sizeof (Decimate));
 
@@ -35,7 +35,7 @@ Decimate *decimateInit (int numChannels, int outputBits, int outputBytes, float 
     cxt->outputGain = outputGain;
     cxt->flags = flags;
 
-    cxt->feedback = calloc (numChannels, sizeof (float));
+    cxt->feedback = calloc (numChannels, sizeof (artsample_t));
 
     if (flags & DITHER_ENABLED) {
         int generator_bytes = numChannels * sizeof (uint32_t);
@@ -99,7 +99,7 @@ Decimate *decimateInit (int numChannels, int outputBits, int outputBytes, float 
 // Run the decimation process for the specified number of frames.
 //
 // This is the "non-interleaved" version of the decimator where the audio sample buffers for
-// different channels are passed in as an array of float pointers and similarly the audio is
+// different channels are passed in as an array of artsample_t pointers and similarly the audio is
 // output using an array of unsigned character pointers, one for each channel. There is also
 // an "interleaved" version (see below).
 
@@ -109,7 +109,7 @@ static int decimateProcessSingleChanLE (void *ptr, void *sync_not_used);
 
 static inline double tpdf_dither (uint32_t *generator, int type);
 
-int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFrames, unsigned char *const *output)
+int decimateProcessLE (Decimate *cxt, const artsample_t *const *input, int numInputFrames, unsigned char *const *output)
 {
 #ifdef ENABLE_THREADS
     if (cxt->workers) {
@@ -149,7 +149,7 @@ int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFra
     }
     else {
 #endif
-    float scaler = (1 << cxt->outputBits) / 2.0 * cxt->outputGain, codevalue;
+    artsample_t scaler = (1 << cxt->outputBits) / 2.0 * cxt->outputGain, codevalue;
     int pre_zeros = cxt->outputBytes - ((cxt->outputBits + 7) / 8);
     int32_t offset = (cxt->outputBits <= 8) * 128;
     int32_t highclip = (1 << (cxt->outputBits - 1)) - 1;
@@ -159,7 +159,7 @@ int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFra
 
     for (i = 0; i < numInputFrames; ++i)
         for (ch = 0; ch < cxt->numChannels; ++ch) {
-            float dither_value = (cxt->flags & DITHER_ENABLED) ? tpdf_dither (cxt->tpdf_generators + ch, cxt->dither_type) : 0.0;
+            artsample_t dither_value = (cxt->flags & DITHER_ENABLED) ? tpdf_dither (cxt->tpdf_generators + ch, cxt->dither_type) : 0.0;
             unsigned char *outp = output [ch] + i * cxt->outputBytes;
             int32_t outvalue;
 
@@ -202,7 +202,7 @@ int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFra
 // channels are passed in sequence in a single buffer. There is also a "non-interleaved"
 // version for independent buffers, which is otherwise identical (see above).
 
-int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInputFrames, unsigned char *output)
+int decimateProcessInterleavedLE (Decimate *cxt, const artsample_t *input, int numInputFrames, unsigned char *output)
 {
 #ifdef ENABLE_THREADS
     if (cxt->workers) {
@@ -242,7 +242,7 @@ int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInpu
     }
     else {
 #endif
-    float scaler = (1 << cxt->outputBits) / 2.0 * cxt->outputGain, codevalue;
+    artsample_t scaler = (1 << cxt->outputBits) / 2.0 * cxt->outputGain, codevalue;
     int pre_zeros = cxt->outputBytes - ((cxt->outputBits + 7) / 8);
     int32_t offset = (cxt->outputBits <= 8) * 128;
     int32_t highclip = (1 << (cxt->outputBits - 1)) - 1;
@@ -252,7 +252,7 @@ int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInpu
 
     for (i = 0; i < numInputFrames; ++i)
         for (ch = 0; ch < cxt->numChannels; ++ch) {
-            float dither_value = (cxt->flags & DITHER_ENABLED) ? tpdf_dither (cxt->tpdf_generators + ch, cxt->dither_type) : 0.0;
+            artsample_t dither_value = (cxt->flags & DITHER_ENABLED) ? tpdf_dither (cxt->tpdf_generators + ch, cxt->dither_type) : 0.0;
             int32_t outvalue;
 
             for (j = 0; j < pre_zeros; ++j)
@@ -295,7 +295,7 @@ int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInpu
 static int decimateProcessSingleChanLE (void *ptr, void *sync_not_used)
 {
     Decimate *cxt = ptr;
-    float scaler = (1 << cxt->outputBits) / 2.0 * cxt->outputGain, codevalue;
+    artsample_t scaler = (1 << cxt->outputBits) / 2.0 * cxt->outputGain, codevalue;
     int pre_zeros = cxt->outputBytes - ((cxt->outputBits + 7) / 8);
     int stride_bytes = (cxt->stride - 1) * cxt->outputBytes;
     int32_t offset = (cxt->outputBits <= 8) * 128;
@@ -305,7 +305,7 @@ static int decimateProcessSingleChanLE (void *ptr, void *sync_not_used)
     int i, j;
 
     for (i = 0; i < cxt->numInputFrames; ++i) {
-        float dither_value = (cxt->flags & DITHER_ENABLED) ? tpdf_dither (&cxt->tpdf_generator, cxt->dither_type) : 0.0;
+        artsample_t dither_value = (cxt->flags & DITHER_ENABLED) ? tpdf_dither (&cxt->tpdf_generator, cxt->dither_type) : 0.0;
         int32_t outvalue;
 
         for (j = 0; j < pre_zeros; ++j)
@@ -386,7 +386,7 @@ static inline double tpdf_dither (uint32_t *generator, int type)
 // H(z) form. The input to the resulting filter is the unfiltered quantization noise and the
 // output, delayed by one sample, is subtracted from the [next] value to be quantized.
 
-static void shaper_init (Biquad *f, float a0, float a1, float a2, float a3, float a4, float b1, float b2, float b3, float b4)
+static void shaper_init (Biquad *f, double a0, double a1, double a2, double a3, double a4, double b1, double b2, double b3, double b4)
 {
     BiquadCoefficients coeffs = { 0 };
 
@@ -413,21 +413,21 @@ static void shaper_init (Biquad *f, float a0, float a1, float a2, float a3, floa
 // context or channel awareness (i.e., samples are samples). A gain parameter is provided
 // as a convenience.
 
-void floatIntegersLE (unsigned char *input, float inputGain, int inputBits, int inputBytes, int inputStride, float *output, int numSamples)
+void floatIntegersLE (unsigned char *input, double inputGain, int inputBits, int inputBytes, int inputStride, artsample_t *output, int numSamples)
 {
     int post_skip = inputStride * inputBytes - ((inputBits + 7) / 8);
 
     input += inputBytes - ((inputBits + 7) / 8);
 
     if (inputBits <= 8) {
-        float gain_factor = inputGain / 128.0;
+        artsample_t gain_factor = inputGain / 128.0;
         int i;
 
         for (i = 0; i < numSamples; ++i, input += post_skip)
             *output++ = ((int) *input++ - 128) * gain_factor;
     }
     else if (inputBits <= 16) {
-        float gain_factor = inputGain / 32768.0;
+        artsample_t gain_factor = inputGain / 32768.0;
         int i;
 
         for (i = 0; i < numSamples; ++i, input += post_skip) {
@@ -437,7 +437,7 @@ void floatIntegersLE (unsigned char *input, float inputGain, int inputBits, int 
         }
     }
     else if (inputBits <= 24) {
-        float gain_factor = inputGain / 8388608.0;
+        artsample_t gain_factor = inputGain / 8388608.0;
         int i;
 
         for (i = 0; i < numSamples; ++i, input += post_skip) {

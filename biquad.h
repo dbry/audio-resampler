@@ -18,13 +18,19 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+typedef double artsample_t;
+#else
+typedef float artsample_t;
+#endif
+
 typedef struct {
-    float a0, a1, a2, a3, a4, b1, b2, b3, b4;
+    artsample_t a0, a1, a2, a3, a4, b1, b2, b3, b4;
 } BiquadCoefficients;
 
 typedef struct {
-    float a[5], b[5];               // coefficients
-    float x[4], y[4];               // delayed input/output
+    artsample_t a[5], b[5];               // coefficients
+    artsample_t x[4], y[4];               // delayed input/output
     int order, index;
 } Biquad;
 
@@ -32,13 +38,13 @@ typedef struct {
 extern "C" {
 #endif
 
-void biquad_init (Biquad *f, const BiquadCoefficients *coeffs, float gain);
+void biquad_init (Biquad *f, const BiquadCoefficients *coeffs, double gain);
 
 void biquad_lowpass (BiquadCoefficients *filter, double frequency);
 void biquad_highpass (BiquadCoefficients *filter, double frequency);
 
-void biquad_apply_buffer (Biquad *f, float *buffer, int num_samples, int stride);
-float biquad_apply_sample (Biquad *f, float input);
+void biquad_apply_buffer (Biquad *f, artsample_t *buffer, int num_samples, int stride);
+artsample_t biquad_apply_sample (Biquad *f, artsample_t input);
 
 #ifdef __cplusplus
 }

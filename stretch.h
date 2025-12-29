@@ -25,6 +25,12 @@
 
 #include <stdint.h>
 
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+typedef double artsample_t;
+#else
+typedef float artsample_t;
+#endif
+
 #define MIN_PERIOD  24          /* minimum allowable pitch period */
 #define MAX_PERIOD  2400        /* maximum allowable pitch period */
 
@@ -33,11 +39,11 @@
 
 typedef struct stretch {
     int num_chans, inbuff_samples, shortest, longest, tail, head, fast_mode;
-    float *inbuff, *calcbuff, *results;
-    float outsamples_error;
+    artsample_t *inbuff, *calcbuff, *results;
+    double outsamples_error;
 
     struct stretch *next;
-    float *intermediate;
+    artsample_t *intermediate;
 } Stretch;
 
 #ifdef __cplusplus
@@ -46,8 +52,8 @@ extern "C" {
 
 Stretch *stretchInit (int shortest_period, int longest_period, int num_channels, int flags);
 int stretchGetOutputCapacity (Stretch *cxt, int max_num_samples, double max_ratio);
-int stretchProcess (Stretch *cxt, const float *samples, int num_samples, float *output, double ratio);
-int stretchFlush (Stretch *cxt, float *output);
+int stretchProcess (Stretch *cxt, const artsample_t *samples, int num_samples, artsample_t *output, double ratio);
+int stretchFlush (Stretch *cxt, artsample_t *output);
 void stretchReset (Stretch *cxt);
 void stretchFree (Stretch *cxt);
 

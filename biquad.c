@@ -48,7 +48,7 @@ void biquad_highpass (BiquadCoefficients *filter, double frequency)
 // Initialize the specified biquad filter with the given parameters. Note that the "gain" parameter is supplied here
 // to save a multiply every time the filter in applied.
 
-void biquad_init (Biquad *f, const BiquadCoefficients *coeffs, float gain)
+void biquad_init (Biquad *f, const BiquadCoefficients *coeffs, double gain)
 {
     memset (f, 0, sizeof (Biquad));
 
@@ -75,9 +75,9 @@ void biquad_init (Biquad *f, const BiquadCoefficients *coeffs, float gain)
 
 // Apply the supplied sample to the specified biquad filter, which must have been initialized with biquad_init().
 
-float biquad_apply_sample (Biquad *f, float input)
+artsample_t biquad_apply_sample (Biquad *f, artsample_t input)
 {
-    float sum = input * f->a[0];
+    artsample_t sum = input * f->a[0];
     int i = f->index & 3;
 
     switch (f->order) {
@@ -103,14 +103,14 @@ float biquad_apply_sample (Biquad *f, float input)
 
 // Apply the supplied buffer to the specified biquad filter, which must have been initialized with biquad_init().
 
-void biquad_apply_buffer (Biquad *f, float *buffer, int num_samples, int stride)
+void biquad_apply_buffer (Biquad *f, artsample_t *buffer, int num_samples, int stride)
 {
     int i = f->index;
 
     switch (f->order) {
         case 4:
             while (num_samples--) {
-                float sum = (*buffer * f->a[0])
+                artsample_t sum = (*buffer * f->a[0])
                     + (f->x[i&3]     * f->a[1]) - (f->b[1] * f->y[i&3])
                     + (f->x[(i-1)&3] * f->a[2]) - (f->b[2] * f->y[(i-1)&3])
                     + (f->x[(i-2)&3] * f->a[3]) - (f->b[3] * f->y[(i-2)&3])
@@ -124,7 +124,7 @@ void biquad_apply_buffer (Biquad *f, float *buffer, int num_samples, int stride)
 
         case 3:
             while (num_samples--) {
-                float sum = (*buffer * f->a[0])
+                artsample_t sum = (*buffer * f->a[0])
                     + (f->x[i&3]     * f->a[1]) - (f->b[1] * f->y[i&3])
                     + (f->x[(i-1)&3] * f->a[2]) - (f->b[2] * f->y[(i-1)&3])
                     + (f->x[(i-2)&3] * f->a[3]) - (f->b[3] * f->y[(i-2)&3]);
@@ -137,7 +137,7 @@ void biquad_apply_buffer (Biquad *f, float *buffer, int num_samples, int stride)
 
         case 2:
             while (num_samples--) {
-                float sum = (*buffer * f->a[0])
+                artsample_t sum = (*buffer * f->a[0])
                     + (f->x[i&3]     * f->a[1]) - (f->b[1] * f->y[i&3])
                     + (f->x[(i-1)&3] * f->a[2]) - (f->b[2] * f->y[(i-1)&3]);
                 f->x[++i&3] = *buffer;
@@ -149,7 +149,7 @@ void biquad_apply_buffer (Biquad *f, float *buffer, int num_samples, int stride)
 
         case 1:
             while (num_samples--) {
-                float sum = (*buffer * f->a[0])
+                artsample_t sum = (*buffer * f->a[0])
                     + (f->x[i&3] * f->a[1]) - (f->b[1] * f->y[i&3]);
                 f->x[++i&3] = *buffer;
                 *buffer = f->y[i&3] = sum;

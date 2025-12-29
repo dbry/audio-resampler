@@ -18,12 +18,12 @@
 #include "stretch.h"
 #include "biquad.h"
 
-#define VERSION         0.6
+#define VERSION         0.7
 
 #define IS_BIG_ENDIAN (*(uint16_t *)"\0\xff" < 0x0100)
 
 static const char *sign_on = "\n"
-" ART  Audio Resampling Tool  Version %.1f\n"
+" ART  Audio Resampling Tool  %d-bit Version %.1f\n"
 " Copyright (c) 2006 - 2025 David Bryant.\n\n";
 
 static const char *usage =
@@ -37,7 +37,11 @@ static const char *usage =
 "                           (follow freq with 'k' for kHz)\n"
 "           -f<num>     = number of sinc filters (1-1024)\n"
 "           -t<num>     = number of sinc taps (4-1024, multiples of 4)\n"
-"           -o<bits>    = change output file bitdepth (4-24 or 32)\n"
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+"           -o<bits>    = change output file bitdepth (4-24, 32, or 64)\n"
+#else
+"           -o<bits>    = change output file bitdepth (4-24, or 32)\n"
+#endif
 "           -d<sel>     = override default dither (which is HP tpdf):\n"
 "                           sel = 0 for no dither\n"
 "                           sel = 1 for flat tpdf dither\n"
@@ -53,7 +57,9 @@ static const char *usage =
 #ifdef ENABLE_THREADS
 "           -m          = use multithreading on stereo & multichannel files\n"
 #endif
+#if !defined(PATH_WIDTH) || (PATH_WIDTH==32)
 "           -e          = extended math resolution for convolution (slow)\n"
+#endif
 "           -p          = pre/post filtering (cascaded biquads)\n"
 "           -q          = quiet mode (display errors only)\n"
 "           -v          = verbose (display lots of info)\n"
@@ -298,11 +304,17 @@ int main (int argc, char **argv)
                     case 'O': case 'o':
                         outbits = strtod (++*argv, argv);
 
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+                        if (outbits != 32 && outbits != 64 && (outbits < 4 || outbits > 24)) {
+                            fprintf (stderr, "\noutbits must be 4 - 24 (for integer) or 32 or 64 (for float)!\n");
+                            return 1;
+                        }
+#else
                         if (outbits != 32 && (outbits < 4 || outbits > 24)) {
                             fprintf (stderr, "\noutbits must be 4 - 24 (for integer) or 32 (for float)!\n");
                             return 1;
                         }
-
+#endif
                         --*argv;
                         break;
 
@@ -354,7 +366,7 @@ int main (int argc, char **argv)
     }
 
     if (verbosity >= 0)
-        fprintf (stderr, sign_on, VERSION);
+        fprintf (stderr, sign_on, sizeof (artsample_t) * 8, VERSION);
 
     if (!outfilename) {
         printf ("%s", usage);
@@ -549,10 +561,10 @@ static int wav_process (char *infilename, char *outfilename)
             }
             else if (format == WAVE_FORMAT_IEEE_FLOAT) {
 
-                if (inbits != 32)
+                if (inbits != 32 && inbits != sizeof (artsample_t) * 8)
                     supported = 0;
 
-                if (WaveHeader.BlockAlign != WaveHeader.NumChannels * 4)
+                if (WaveHeader.BlockAlign != WaveHeader.NumChannels * (inbits / 8))
                     supported = 0;
             }
             else
@@ -708,12 +720,12 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     unsigned long num_samples, int num_channels, int inbits)
 {
     unsigned long remaining_samples = num_samples, output_samples = 0, clipped_samples = 0, target_output_samples;
-    float *inbuffer = malloc (BUFFER_SAMPLES * num_channels * sizeof (float)), *stretch_buffer = NULL, *outbuffer;
+    artsample_t *inbuffer = malloc (BUFFER_SAMPLES * num_channels * sizeof (artsample_t)), *stretch_buffer = NULL, *outbuffer;
     double sample_ratio = (double) resample_rate / sample_rate, stretch_ratio = 1.0;
     int upper_frequency = 350, lower_frequency = 50, pre_filter = 0, post_filter = 0;
     Biquad *lowpass1 = NULL, *lowpass2 = NULL;
     uint32_t progress_divider = 0, percent;
-    float *resample_buffer = inbuffer;
+    artsample_t *resample_buffer = inbuffer;
     BiquadCoefficients lowpass_coeff;
     unsigned char *tmpbuffer = NULL;
     unsigned int outbuffer_samples;
@@ -721,6 +733,9 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     Decimate *decimator = NULL;
     Resample *resampler = NULL;
     Stretch *stretcher = NULL;
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+    float *floatbuffer = NULL;
+#endif
 
     // if the user specified a target duration (absolute or relative), we calculate a tempo ratio here
 
@@ -771,7 +786,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
             stretcher = stretchInit (sample_rate / upper_frequency, sample_rate / lower_frequency, num_channels, stretch_flags);
             stretch_samples = stretchGetOutputCapacity (stretcher, BUFFER_SAMPLES, stretch_ratio);
-            resample_buffer = stretch_buffer = malloc (stretch_samples * num_channels * sizeof (float));
+            resample_buffer = stretch_buffer = malloc (stretch_samples * num_channels * sizeof (artsample_t));
             outbuffer_samples = (int) floor ((stretch_samples + num_taps / 2) * sample_ratio + 100.0);
 
             if (verbosity > 0)
@@ -783,7 +798,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
     else 
         outbuffer_samples = (int) floor ((BUFFER_SAMPLES + num_taps / 2) * sample_ratio + 100.0);
 
-    outbuffer = malloc (outbuffer_samples * num_channels * sizeof (float));
+    outbuffer = malloc (outbuffer_samples * num_channels * sizeof (artsample_t));
     target_output_samples = (unsigned long) floor ((double) num_samples * stretch_ratio * sample_ratio + 0.5);
 
     if (num_filters && (sample_ratio != 1.0 || lowpass_freq || phase_shift != 0.0)) {
@@ -860,7 +875,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         }
     }
 
-    if (outbits != 32) {
+    if (outbits < 32) {
         int decimate_flags = dither | noise_shaping;
 
 #ifdef ENABLE_THREADS
@@ -871,7 +886,9 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         decimator = decimateInit (num_channels, outbits, (outbits + 7) / 8, 1.0, resample_rate, decimate_flags);
     }
 
-    if (inbits != 32 || outbits != 32) {
+    // if either input or output is integer, allocate a buffer for that
+
+    if (inbits < 32 || outbits < 32) {
         int max_samples = BUFFER_SAMPLES, max_bytes = 2;
 
         if (outbuffer_samples > BUFFER_SAMPLES)
@@ -882,9 +899,25 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
         tmpbuffer = malloc (max_samples * num_channels * max_bytes);
 
-        if (inbits != 32)
+        if (inbits < 32)
             readbuffer = tmpbuffer;
     }
+
+    // if we're using a 64-bit path and need to read or write 32-bit floats, allocate a buffer for that
+
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+    if (inbits == 32 || outbits == 32) {
+        int max_samples = BUFFER_SAMPLES;
+
+        if (outbuffer_samples > BUFFER_SAMPLES)
+            max_samples = outbuffer_samples;
+
+        floatbuffer = malloc (max_samples * num_channels * sizeof (float));
+
+        if (inbits == 32)
+            readbuffer = floatbuffer;
+    }
+#endif
 
     // this takes care of the filter delay and any user-specified phase shift
     if (resampler)
@@ -912,17 +945,46 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
 
         if (inbits > 24) {
             if (IS_BIG_ENDIAN) {
-                unsigned char *bptr = (unsigned char *) inbuffer, word [4];
-                int wcount = samples_read * num_channels;
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+                if (inbits == 64) {
+                    unsigned char *bptr = (unsigned char *) inbuffer, word [8];
+                    int wcount = samples_read * num_channels;
 
-                while (wcount--) {
-                    memcpy (word, bptr, 4);
-                    *bptr++ = word [3];
-                    *bptr++ = word [2];
-                    *bptr++ = word [1];
-                    *bptr++ = word [0];
+                    while (wcount--) {
+                        memcpy (word, bptr, 8);
+                        *bptr++ = word [7];
+                        *bptr++ = word [6];
+                        *bptr++ = word [5];
+                        *bptr++ = word [4];
+                        *bptr++ = word [3];
+                        *bptr++ = word [2];
+                        *bptr++ = word [1];
+                        *bptr++ = word [0];
+                    }
+                }
+#endif
+
+                if (inbits == 32) {
+                    unsigned char *bptr = (unsigned char *) inbuffer, word [4];
+                    int wcount = samples_read * num_channels;
+
+                    while (wcount--) {
+                        memcpy (word, bptr, 4);
+                        *bptr++ = word [3];
+                        *bptr++ = word [2];
+                        *bptr++ = word [1];
+                        *bptr++ = word [0];
+                    }
                 }
             }
+
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+            if (inbits == 32) {
+                int i;
+                for (i = 0; i < samples_read * num_channels; ++i)
+                    inbuffer [i] = floatbuffer [i];
+            }
+#endif
 
             if (gain != 1.0) {
                 int  i;
@@ -933,7 +995,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         else
             floatIntegersLE (tmpbuffer, gain, inbits, (inbits + 7) / 8, 1, inbuffer, samples_read * num_channels);
 
-        // common code to process the audio in 32-bit floats
+        // common code to process the audio in 32-bit or 64-bit floats
         // first step is any audio stretching, which is done into stretch_buffer
         // we flush the stretcher if no samples were read
 
@@ -967,7 +1029,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             }
         }
         else {
-            memcpy (outbuffer, resample_buffer, samples_read * num_channels * sizeof (float));
+            memcpy (outbuffer, resample_buffer, samples_read * num_channels * sizeof (artsample_t));
             samples_generated = samples_read;
         }
 
@@ -982,7 +1044,7 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
             if (samples_generated > outbuffer_samples)
                 samples_generated = outbuffer_samples;
 
-            memset (outbuffer, 0, samples_generated * num_channels * sizeof (float));
+            memset (outbuffer, 0, samples_generated * num_channels * sizeof (artsample_t));
         }
 
         // final processing is any post-filtering, which is done inline
@@ -1000,13 +1062,25 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
         if (output_samples + samples_generated > target_output_samples)
             samples_generated = target_output_samples - output_samples;
 
-        if (outbits != 32) {
+        if (outbits < 32) {
             clipped_samples += decimateProcessInterleavedLE (decimator, outbuffer, samples_generated, tmpbuffer);
             fwrite (tmpbuffer, num_channels * ((outbits + 7) / 8), samples_generated, outfile);
         }
-        else {
+        else if (outbits == 32) {
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+            void *writebuffer = floatbuffer;
+
+            if (sizeof (artsample_t) == 8) {
+                int i;
+                for (i = 0; i < samples_generated * num_channels; ++i)
+                    floatbuffer [i] = outbuffer [i];
+            }
+#else
+            void *writebuffer = outbuffer;
+#endif
+
             if (IS_BIG_ENDIAN) {
-                unsigned char *bptr = (unsigned char *) outbuffer, word [4];
+                unsigned char *bptr = writebuffer, word [4];
                 int wcount = samples_generated * num_channels;
 
                 while (wcount--) {
@@ -1018,8 +1092,30 @@ static unsigned int process_audio (FILE *infile, FILE *outfile, unsigned long sa
                 }
             }
 
-            fwrite (outbuffer, num_channels * sizeof (float), samples_generated, outfile);
+            fwrite (writebuffer, num_channels * sizeof (float), samples_generated, outfile);
         }
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+        else {
+            if (IS_BIG_ENDIAN) {
+                unsigned char *bptr = (unsigned char*) outbuffer, word [8];
+                int wcount = samples_generated * num_channels;
+
+                while (wcount--) {
+                    memcpy (word, bptr, 8);
+                    *bptr++ = word [7];
+                    *bptr++ = word [6];
+                    *bptr++ = word [5];
+                    *bptr++ = word [4];
+                    *bptr++ = word [3];
+                    *bptr++ = word [2];
+                    *bptr++ = word [1];
+                    *bptr++ = word [0];
+                }
+            }
+
+            fwrite (outbuffer, num_channels * sizeof (artsample_t), samples_generated, outfile);
+        }
+#endif
 
         output_samples += samples_generated;
 
@@ -1066,7 +1162,7 @@ static int write_pcm_wav_header (FILE *outfile, int bps, int num_channels, unsig
 
     int wavhdrsize = 16;
     int bytes_per_sample = (bps + 7) / 8;
-    int format = (bps == 32) ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM;
+    int format = (bps >= 32) ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM;
     uint32_t total_data_bytes = num_samples * bytes_per_sample * num_channels;
 
     memset (&wavhdr, 0, sizeof (wavhdr));

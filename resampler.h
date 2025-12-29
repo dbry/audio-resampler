@@ -19,6 +19,12 @@
 #include "workers.h"
 #endif
 
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+typedef double artsample_t;
+#else
+typedef float artsample_t;
+#endif
+
 #define SUBSAMPLE_INTERPOLATE   0x1
 #define BLACKMAN_HARRIS         0x2
 #define INCLUDE_LOWPASS         0x4
@@ -37,13 +43,13 @@ typedef struct {
 typedef struct {
     int numChannels, numSamples, numFilters, numTaps, inputIndex, flags;
     double *tempFilter, outputOffset, fixedRatio, lowpassRatio;
-    double (*apply_filter)(float *A, float *B, int num_taps);
-    float **buffers, **filters;
+    double (*apply_filter)(artsample_t *A, artsample_t *B, int num_taps);
+    artsample_t **buffers, **filters;
 
 #ifdef ENABLE_THREADS
     Workers *workers;
-    const float *input;
-    float *cbuffer, *output;
+    const artsample_t *input;
+    artsample_t *cbuffer, *output;
     int numInputFrames, numOutputFrames, stride;
     ResampleResult res;
     double ratio;
@@ -56,10 +62,10 @@ extern "C" {
 
 Resample *resampleInit (int numChannels, int numTaps, int numFilters, double lowpassRatio, int flags);
 Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, double sourceRate, double destinRate, int lowpassFreq, int flags);
-ResampleResult resampleProcess (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio);
-ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio);
-ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio);
-ResampleResult resampleProcessAndFlushInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio);
+ResampleResult resampleProcess (Resample *cxt, const artsample_t *const *input, int numInputFrames, artsample_t *const *output, int numOutputFrames, double ratio);
+ResampleResult resampleProcessInterleaved (Resample *cxt, const artsample_t *input, int numInputFrames, artsample_t *output, int numOutputFrames, double ratio);
+ResampleResult resampleProcessAndFlush (Resample *cxt, const artsample_t *const *input, int numInputFrames, artsample_t *const *output, int numOutputFrames, double ratio);
+ResampleResult resampleProcessAndFlushInterleaved (Resample *cxt, const artsample_t *input, int numInputFrames, artsample_t *output, int numOutputFrames, double ratio);
 unsigned int resampleGetRequiredSamples (Resample *cxt, int numOutputFrames, double ratio);
 unsigned int resampleGetExpectedOutput (Resample *cxt, int numInputFrames, double ratio);
 void resampleAdvancePosition (Resample *cxt, double delta);

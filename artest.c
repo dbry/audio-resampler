@@ -33,14 +33,15 @@
 
 #define FIXED_RATIO     // define if resampler module has resampleFixedRatioInit()
 
-static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio);
-static ResampleResult resampleProcessAndFlushInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio);
-static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *input, int numInputFrames, unsigned char *output);
-static void fill_buffer_with_noise (float *data, int count), fill_buffer_with_tone (float *data, int count, int chans, double freq);
-static void fade_in (float *data, int count), fade_out (float *data, int count);
+static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const artsample_t *input, int numInputFrames, artsample_t *output, int numOutputFrames, double ratio);
+static ResampleResult resampleProcessAndFlushInterleavedSimulator (Resample *cxt, const artsample_t *input, int numInputFrames, artsample_t *output, int numOutputFrames, double ratio);
+static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const artsample_t *input, int numInputFrames, unsigned char *output);
+static void fill_buffer_with_noise (artsample_t *data, int count), fill_buffer_with_tone (artsample_t *data, int count, int chans, double freq);
+static void fade_in (artsample_t *data, int count), fade_out (artsample_t *data, int count);
 
 static const char *usage =
-" Usage:     ARTEST [-options] [< infile.raw] [> outfile.raw]\n\n"
+" Usage:    ARTEST [-options] [< infile.raw] [> outfile.raw]\n\n"
+" Version:  %d-bit\n\n"
 " Options:  -1|2|3|4    = quality presets, default = 3\n"
 "           -b<num>     = inbuffer samples (default 4096)\n"
 "           -c<num>     = number of channels (1-256, default 2)\n"
@@ -73,18 +74,20 @@ static const char *usage =
 #ifdef ENABLE_EXTRAPOLATION
 "           -x          = extrapolate audio endpoints to reduce glitches\n"
 #endif
+#if !defined(PATH_WIDTH) || (PATH_WIDTH==32)
 "           -p          = precise, use doubles not floats for convolution\n"
+#endif
 "           -v          = test non-interleaved versions (if they exist)\n"
 "           -o<bits>    = change output file bitdepth (4-24 or 32)\n\n";
 
 typedef struct {
     uint64_t count, checksum;
-    float min, max;
+    artsample_t min, max;
     double rms;
     int chans;
 } Stats;
 
-void update_stats (float *data, int samples, int chans, Stats *stats)
+void update_stats (artsample_t *data, int samples, int chans, Stats *stats)
 {
     int tsamples = samples * chans;
 
@@ -116,7 +119,7 @@ int main (int argc, char **argv)
     int dither = DITHER_HIGHPASS, noise_shaping = SHAPING_ATH_CURVE, multithreading = 0, fades = 1;
     int read_stdin = 0, write_stdout = 0, exact = 0, non_interleaved = 0, inv_resample = 0, buffers;
     int chans = 2, taps = 380, filters = 380, seconds = 60, outbits = 32, outbytes = 4;
-    float *inbuffer = NULL, *outbuffer = NULL, *invbuffer = NULL, *rembuffer = NULL;
+    artsample_t *inbuffer = NULL, *outbuffer = NULL, *invbuffer = NULL, *rembuffer = NULL;
     int source_rate = 0, destin_rate = 0, lowpass_freq = 0;
     int flags = BLACKMAN_HARRIS | SUBSAMPLE_INTERPOLATE;
     Resample *resampler = NULL, *inv_resampler = NULL;
@@ -133,7 +136,7 @@ int main (int argc, char **argv)
     double tone_freq = 0.0;
 
     if (argc < 3) {
-        fprintf (stderr, "%s", usage);
+        fprintf (stderr, usage, sizeof (artsample_t) * 8);
         return 0;
     }
 
@@ -360,13 +363,13 @@ int main (int argc, char **argv)
 
     ratio = (double) destin_rate / source_rate;
     outbuffer_samples = floor ((inbuffer_samples + taps / 2) * ratio + 10);
-    inbuffer = malloc (inbuffer_samples * chans * sizeof (float));
-    outbuffer = malloc (outbuffer_samples * chans * sizeof (float));
+    inbuffer = malloc (inbuffer_samples * chans * sizeof (artsample_t));
+    outbuffer = malloc (outbuffer_samples * chans * sizeof (artsample_t));
     buffers = ceil ((double) seconds * source_rate / inbuffer_samples);
 
     if (inv_resample) {
         invbuffer_samples = floor ((outbuffer_samples + taps / 2) / ratio + 10);
-        invbuffer = malloc (invbuffer_samples * chans * sizeof (float));
+        invbuffer = malloc (invbuffer_samples * chans * sizeof (artsample_t));
         inv_ratio = (double) source_rate / destin_rate;
     }
 
@@ -440,7 +443,7 @@ int main (int argc, char **argv)
         ResampleResult res, inv_res;
 
         if (read_stdin)
-            inbuffer_samples = fread (inbuffer, sizeof (float) * chans, inbuffer_samples, stdin);
+            inbuffer_samples = fread (inbuffer, sizeof (artsample_t) * chans, inbuffer_samples, stdin);
         else {
             if (tone_freq)
                 fill_buffer_with_tone (inbuffer, inbuffer_samples, chans, tone_freq / source_rate);
@@ -461,10 +464,10 @@ int main (int argc, char **argv)
         update_stats (inbuffer, inbuffer_samples, chans, &in_stats);
 
         if (write_stdout == 1)
-            fwrite (inbuffer, sizeof (float) * chans, inbuffer_samples, stdout);
+            fwrite (inbuffer, sizeof (artsample_t) * chans, inbuffer_samples, stdout);
 
         if (!resampler) {
-            memcpy (outbuffer, inbuffer, inbuffer_samples * chans * sizeof (float));
+            memcpy (outbuffer, inbuffer, inbuffer_samples * chans * sizeof (artsample_t));
             res.output_generated = res.input_used = inbuffer_samples;
         }
         else if (bi < buffers - 1)
@@ -484,11 +487,11 @@ int main (int argc, char **argv)
         update_stats (outbuffer, res.output_generated, chans, &out_stats);
 
         if (write_stdout == 2)
-            fwrite (outbuffer, sizeof (float) * chans, res.output_generated, stdout);
+            fwrite (outbuffer, sizeof (artsample_t) * chans, res.output_generated, stdout);
 
         if (inv_resample) {
             if (!inv_resampler) {
-                memcpy (invbuffer, outbuffer, res.output_generated * chans * sizeof (float));
+                memcpy (invbuffer, outbuffer, res.output_generated * chans * sizeof (artsample_t));
                 inv_res.output_generated = inv_res.input_used = res.output_generated;
             }
             else if (bi < buffers - 1) {
@@ -517,20 +520,20 @@ int main (int argc, char **argv)
             update_stats (invbuffer, inv_res.output_generated, chans, &inv_stats);
 
             if (write_stdout == 4)
-                fwrite (invbuffer, sizeof (float) * chans, inv_res.output_generated, stdout);
+                fwrite (invbuffer, sizeof (artsample_t) * chans, inv_res.output_generated, stdout);
 
             int next_rembuffer_samples = rembuffer_samples + inbuffer_samples - inv_res.output_generated;
 
             if (next_rembuffer_samples > max_rembuffer_samples) {
-                rembuffer = realloc (rembuffer, next_rembuffer_samples * chans * sizeof (float));
+                rembuffer = realloc (rembuffer, next_rembuffer_samples * chans * sizeof (artsample_t));
                 max_rembuffer_samples = next_rembuffer_samples;
             }
 
             int rembuffer_diff_count = 0, inbuffer_diff_count = 0, rembuffer_move_count = 0, inbuffer_move_count = 0;
-            float *rembuffer_src_ptr = rembuffer;
-            float *rembuffer_dst_ptr = rembuffer;
-            float *invbuffer_ptr = invbuffer;
-            float *inbuffer_ptr = inbuffer;
+            artsample_t *rembuffer_src_ptr = rembuffer;
+            artsample_t *rembuffer_dst_ptr = rembuffer;
+            artsample_t *invbuffer_ptr = invbuffer;
+            artsample_t *inbuffer_ptr = inbuffer;
 
             if (inv_res.output_generated >= rembuffer_samples) {
                 rembuffer_diff_count = rembuffer_samples * chans;
@@ -559,7 +562,7 @@ int main (int argc, char **argv)
             update_stats (invbuffer, inv_res.output_generated, chans, &diff_stats);
 
             if (write_stdout == 5)
-                fwrite (invbuffer, sizeof (float) * chans, inv_res.output_generated, stdout);
+                fwrite (invbuffer, sizeof (artsample_t) * chans, inv_res.output_generated, stdout);
         }
 
         if (outbits != 32) {
@@ -610,13 +613,13 @@ int main (int argc, char **argv)
 
 // simulate the interleaved decimator API but use the non-interleaved version
 
-static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *input, int numInputFrames, unsigned char *output)
+static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const artsample_t *input, int numInputFrames, unsigned char *output)
 {
-    float **input_array = calloc (sizeof (float*), cxt->numChannels);
+    artsample_t **input_array = calloc (sizeof (artsample_t*), cxt->numChannels);
     unsigned char **output_array = calloc (sizeof (unsigned char*), cxt->numChannels);
 
     for (int c = 0; c < cxt->numChannels; ++c) {
-        input_array [c] = malloc (numInputFrames * sizeof (float));
+        input_array [c] = malloc (numInputFrames * sizeof (artsample_t));
         output_array [c] = malloc (numInputFrames * cxt->outputBytes);
     }
 
@@ -624,7 +627,7 @@ static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *in
         for (int c = 0; c < cxt->numChannels; ++c)
             input_array [c] [i] = *input++;
 
-    int res = decimateProcessLE (cxt, (const float * const *) input_array, numInputFrames, output_array);
+    int res = decimateProcessLE (cxt, (const artsample_t * const *) input_array, numInputFrames, output_array);
 
     for (int i = 0; i < numInputFrames; ++i)
         for (int c = 0; c < cxt->numChannels; ++c) {
@@ -648,21 +651,21 @@ static int decimateProcessInterleavedSimulatorLE (Decimate *cxt, const float *in
 #if 1   // this version of the simulator is for determining whether the two versions generate the same values,
         // but hurts performance so should not be used to evaluate the relative performance of the versions.
 
-static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
+static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const artsample_t *input, int numInputFrames, artsample_t *output, int numOutputFrames, double ratio)
 {
-    float **input_array = calloc (sizeof (float*), cxt->numChannels);
-    float **output_array = calloc (sizeof (float*), cxt->numChannels);
+    artsample_t **input_array = calloc (sizeof (artsample_t*), cxt->numChannels);
+    artsample_t **output_array = calloc (sizeof (artsample_t*), cxt->numChannels);
 
     for (int c = 0; c < cxt->numChannels; ++c) {
-        input_array [c] = input ? malloc (numInputFrames * sizeof (float)) : NULL;
-        output_array [c] = malloc (numOutputFrames * sizeof (float));
+        input_array [c] = input ? malloc (numInputFrames * sizeof (artsample_t)) : NULL;
+        output_array [c] = malloc (numOutputFrames * sizeof (artsample_t));
     }
 
     for (int i = 0; i < numInputFrames; ++i)
         for (int c = 0; c < cxt->numChannels; ++c)
             input_array [c] [i] = *input++;
 
-    ResampleResult res = resampleProcess (cxt, (const float * const *) input_array, numInputFrames, output_array, numOutputFrames, ratio);
+    ResampleResult res = resampleProcess (cxt, (const artsample_t * const *) input_array, numInputFrames, output_array, numOutputFrames, ratio);
 
     for (int i = 0; i < res.output_generated; ++i)
         for (int c = 0; c < cxt->numChannels; ++c)
@@ -682,40 +685,40 @@ static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const 
 #else   // This version of the simulator is for evaluating the relative performance of the two versions because it does almost
         // nothing, but the resulting audio will have discontinuities and not match, but from run to run it should be consistent.
 
-static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
+static ResampleResult resampleProcessInterleavedSimulator (Resample *cxt, const artsample_t *input, int numInputFrames, artsample_t *output, int numOutputFrames, double ratio)
 {
-    float *input_array [cxt->numChannels];
-    float *output_array [cxt->numChannels];
+    artsample_t *input_array [cxt->numChannels];
+    artsample_t *output_array [cxt->numChannels];
 
     for (int c = 0; c < cxt->numChannels; ++c) {
-        input_array [c] = (float* const) (input + numInputFrames * c);
-        output_array [c] = (float* const) (output + numOutputFrames * c);
+        input_array [c] = (artsample_t* const) (input + numInputFrames * c);
+        output_array [c] = (artsample_t* const) (output + numOutputFrames * c);
     }
 
     for (int i = 0; i < numInputFrames; ++i)
         for (int c = 0; c < cxt->numChannels; ++c)
             input_array [c] [i] = *input++;
 
-    return resampleProcess (cxt, (const float * const *) input_array, numInputFrames, output_array, numOutputFrames, ratio);
+    return resampleProcess (cxt, (const artsample_t * const *) input_array, numInputFrames, output_array, numOutputFrames, ratio);
 }
 
 #endif
 
-static ResampleResult resampleProcessAndFlushInterleavedSimulator (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
+static ResampleResult resampleProcessAndFlushInterleavedSimulator (Resample *cxt, const artsample_t *input, int numInputFrames, artsample_t *output, int numOutputFrames, double ratio)
 {
-    float **input_array = calloc (sizeof (float*), cxt->numChannels);
-    float **output_array = calloc (sizeof (float*), cxt->numChannels);
+    artsample_t **input_array = calloc (sizeof (artsample_t*), cxt->numChannels);
+    artsample_t **output_array = calloc (sizeof (artsample_t*), cxt->numChannels);
 
     for (int c = 0; c < cxt->numChannels; ++c) {
-        input_array [c] = malloc (numInputFrames * sizeof (float));
-        output_array [c] = malloc (numOutputFrames * sizeof (float));
+        input_array [c] = malloc (numInputFrames * sizeof (artsample_t));
+        output_array [c] = malloc (numOutputFrames * sizeof (artsample_t));
     }
 
     for (int i = 0; i < numInputFrames; ++i)
         for (int c = 0; c < cxt->numChannels; ++c)
             input_array [c] [i] = *input++;
 
-    ResampleResult res = resampleProcessAndFlush (cxt, input ? (const float * const *) input_array : NULL, numInputFrames, output_array, numOutputFrames, ratio);
+    ResampleResult res = resampleProcessAndFlush (cxt, input ? (const artsample_t * const *) input_array : NULL, numInputFrames, output_array, numOutputFrames, ratio);
 
     for (int i = 0; i < res.output_generated; ++i)
         for (int c = 0; c < cxt->numChannels; ++c)
@@ -734,7 +737,7 @@ static ResampleResult resampleProcessAndFlushInterleavedSimulator (Resample *cxt
 
 // fill buffer with +/-0.5 white noise
 
-static void fill_buffer_with_noise (float *data, int count)
+static void fill_buffer_with_noise (artsample_t *data, int count)
 {
     static uint64_t random = 0x3141592653589793;
 
@@ -748,7 +751,7 @@ static void fill_buffer_with_noise (float *data, int count)
 
 // fill buffer with +/-0.5 tone at specified frequency
 
-static void fill_buffer_with_tone (float *data, int count, int chans, double freq)
+static void fill_buffer_with_tone (artsample_t *data, int count, int chans, double freq)
 {
     static double phase_angle;
     double chan_offset;
@@ -766,7 +769,7 @@ static void fill_buffer_with_tone (float *data, int count, int chans, double fre
     }
 }
 
-static void fade_in (float *data, int count)
+static void fade_in (artsample_t *data, int count)
 {
     int zcount = count / 4;
     int fcount = count - zcount;
@@ -778,7 +781,7 @@ static void fade_in (float *data, int count)
         *data++ *= (cos ((fcount - i) * M_PI / fcount) + 1.0) / 2.0;
 }
 
-static void fade_out (float *data, int count)
+static void fade_out (artsample_t *data, int count)
 {
     int zcount = count / 4;
     int fcount = count - zcount;

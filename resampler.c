@@ -14,10 +14,10 @@
 #include "extrapolator.h"
 #endif
 
-static void init_filter (Resample *cxt, float *filter, double fraction);
-static double subsample (Resample *cxt, float *source, double offset);
-static double apply_filter_precise (float *A, float *B, int num_taps);
-static double apply_filter (float *A, float *B, int num_taps);
+static void init_filter (Resample *cxt, artsample_t *filter, double fraction);
+static double subsample (Resample *cxt, artsample_t *source, double offset);
+static double apply_filter_precise (artsample_t *A, artsample_t *B, int num_taps);
+static double apply_filter (artsample_t *A, artsample_t *B, int num_taps);
 static unsigned long gcd (unsigned long a, unsigned long b);
 
 // There are now two functions to initialize a resampler context. The legacy version is for
@@ -84,6 +84,7 @@ static unsigned long gcd (unsigned long a, unsigned long b);
 //                                - this can improve resampling quality, but just a few dB at best
 //                                - can result in significant performance hit on some platforms
 //                                - might be worth it, but generally not recommended
+//                                - non-operational when the 64-bit path selected
 // Notes:
 //
 // 1. The same resampling instance can be used for upsampling, downsampling, or simple (near-unity)
@@ -141,13 +142,13 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 
     // note that we actually have one more than the specified number of filters
 
-    cxt->filters = calloc (cxt->numFilters + 1, sizeof (float*));
+    cxt->filters = calloc (cxt->numFilters + 1, sizeof (artsample_t*));
     cxt->tempFilter = malloc (numTaps * sizeof (double));
 
     for (i = 0; i <= cxt->numFilters; ++i) {
         int j;
 
-        cxt->filters [i] = calloc (cxt->numTaps, sizeof (float));
+        cxt->filters [i] = calloc (cxt->numTaps, sizeof (artsample_t));
 
         if (i < cxt->numFilters)
             init_filter (cxt, cxt->filters [i], (double) i / cxt->numFilters);
@@ -158,10 +159,10 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
     }
 
     free (cxt->tempFilter); cxt->tempFilter = NULL;
-    cxt->buffers = calloc (numChannels, sizeof (float*));
+    cxt->buffers = calloc (numChannels, sizeof (artsample_t*));
 
     for (i = 0; i < numChannels; ++i)
-        cxt->buffers [i] = calloc (cxt->numSamples, sizeof (float));
+        cxt->buffers [i] = calloc (cxt->numSamples, sizeof (artsample_t));
 
     cxt->outputOffset = numTaps / 2;
     cxt->inputIndex = numTaps;
@@ -176,7 +177,9 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
         cxt->workers = workersInit (numChannels);
 #endif
 
-    if (cxt->flags & EXTEND_CONVOLUTION_MATH)
+    // extended math only makes sense if we have a 32-bit path
+
+    if (sizeof (artsample_t) == 4 && (cxt->flags & EXTEND_CONVOLUTION_MATH))
         cxt->apply_filter = apply_filter_precise;
     else
         cxt->apply_filter = apply_filter;
@@ -272,6 +275,7 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
 //                                - this can improve resampling quality, but just a few dB at best
 //                                - can result in significant performance hit on some platforms
 //                                - might be worth it, but generally not recommended
+//                                - non-operational when the 64-bit path selected
 // Notes:
 //
 // 1. The resampling instance created by this call can only be used to perform the specified
@@ -365,7 +369,7 @@ void resampleReset (Resample *cxt)
     int i;
 
     for (i = 0; i < cxt->numChannels; ++i)
-        memset (cxt->buffers [i], 0,  cxt->numSamples * sizeof (float));
+        memset (cxt->buffers [i], 0,  cxt->numSamples * sizeof (artsample_t));
 
     cxt->outputOffset = cxt->numTaps / 2;
     cxt->inputIndex = cxt->numTaps;
@@ -410,7 +414,7 @@ static void prefillAllChannels (Resample *cxt), postfillAllChannels (Resample *c
 static void postfillAllChannels (Resample *cxt);
 #endif
 
-ResampleResult resampleProcess (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio)
+ResampleResult resampleProcess (Resample *cxt, const artsample_t *const *input, int numInputFrames, artsample_t *const *output, int numOutputFrames, double ratio)
 {
     if (cxt->flags & RESAMPLE_FIXED_RATIO)  // override any supplied ratio if doing fixed ratio resampling
         ratio = cxt->fixedRatio;
@@ -476,7 +480,7 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
             if (numInputFrames > 0) {
                 if (cxt->inputIndex == cxt->numSamples) {
                     for (i = 0; i < cxt->numChannels; ++i)
-                        memmove (cxt->buffers [i], cxt->buffers [i] + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (float));
+                        memmove (cxt->buffers [i], cxt->buffers [i] + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (artsample_t));
 
                     cxt->outputOffset -= cxt->numSamples - cxt->numTaps;
                     cxt->inputIndex -= cxt->numSamples - cxt->numTaps;
@@ -522,7 +526,7 @@ ResampleResult resampleProcess (Resample *cxt, const float *const *input, int nu
 // If this resampler was created with the resampleFixedRatioInit() function, then the "ratio"
 // parameter is ignored and the originally specified conversion is performed.
 
-ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
+ResampleResult resampleProcessInterleaved (Resample *cxt, const artsample_t *input, int numInputFrames, artsample_t *output, int numOutputFrames, double ratio)
 {
     if (cxt->flags & RESAMPLE_FIXED_RATIO)  // override any supplied ratio if doing fixed ratio resampling
         ratio = cxt->fixedRatio;
@@ -588,7 +592,7 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const float *input, in
             if (numInputFrames > 0) {
                 if (cxt->inputIndex == cxt->numSamples) {
                     for (i = 0; i < cxt->numChannels; ++i)
-                        memmove (cxt->buffers [i], cxt->buffers [i] + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (float));
+                        memmove (cxt->buffers [i], cxt->buffers [i] + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (artsample_t));
 
                     cxt->outputOffset -= cxt->numSamples - cxt->numTaps;
                     cxt->inputIndex -= cxt->numSamples - cxt->numTaps;
@@ -636,14 +640,14 @@ static void postfillAllChannels (Resample *cxt)
 
     if (cxt->numSamples - cxt->inputIndex < cxt->numTaps / 2) {
         for (c = 0; c < cxt->numChannels; ++c)
-            memmove (cxt->buffers [c], cxt->buffers [c] + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (float));
+            memmove (cxt->buffers [c], cxt->buffers [c] + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (artsample_t));
 
         cxt->outputOffset -= cxt->numSamples - cxt->numTaps;
         cxt->inputIndex -= cxt->numSamples - cxt->numTaps;
     }
 
     for (c = 0; c < cxt->numChannels; ++c) {
-        memset (cxt->buffers [c] + cxt->inputIndex, 0, (cxt->numSamples - cxt->inputIndex) * sizeof (float));
+        memset (cxt->buffers [c] + cxt->inputIndex, 0, (cxt->numSamples - cxt->inputIndex) * sizeof (artsample_t));
 #ifdef ENABLE_EXTRAPOLATION
         if (cxt->flags & EXTRAPOLATE_ENDPOINTS)
             extrapolate_forward (cxt->buffers [c] + cxt->inputIndex - cxt->numTaps / 2, cxt->numTaps / 2, cxt->numTaps / 2);
@@ -679,9 +683,9 @@ static void prefillAllChannels (Resample *cxt)
 // and then calling them again with numInputFrames set to -1 to execute the flush. This simply combines the
 // two calls into one.
 
-ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input, int numInputFrames, float *const *output, int numOutputFrames, double ratio)
+ResampleResult resampleProcessAndFlush (Resample *cxt, const artsample_t *const *input, int numInputFrames, artsample_t *const *output, int numOutputFrames, double ratio)
 {
-    float **output_array = calloc (sizeof (float*), cxt->numChannels);
+    artsample_t **output_array = calloc (sizeof (artsample_t*), cxt->numChannels);
     ResampleResult res = { 0, 0 }, fres;
     int c;
 
@@ -708,7 +712,7 @@ ResampleResult resampleProcessAndFlush (Resample *cxt, const float *const *input
     return res;
 }
 
-ResampleResult resampleProcessAndFlushInterleaved (Resample *cxt, const float *input, int numInputFrames, float *output, int numOutputFrames, double ratio)
+ResampleResult resampleProcessAndFlushInterleaved (Resample *cxt, const artsample_t *input, int numInputFrames, artsample_t *output, int numOutputFrames, double ratio)
 {
     ResampleResult res = { 0, 0 }, fres;
 
@@ -744,12 +748,12 @@ static int resampleProcessChannelJob (void *ptr, void *sync_not_used)
 
     if (cxt->numInputFrames < 0) {
         if (cxt->numSamples - cxt->inputIndex < cxt->numTaps / 2) {
-            memmove (cxt->cbuffer, cxt->cbuffer + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (float));
+            memmove (cxt->cbuffer, cxt->cbuffer + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (artsample_t));
             cxt->outputOffset -= cxt->numSamples - cxt->numTaps;
             cxt->inputIndex -= cxt->numSamples - cxt->numTaps;
         }
 
-        memset (cxt->cbuffer + cxt->inputIndex, 0, (cxt->numSamples - cxt->inputIndex) * sizeof (float));
+        memset (cxt->cbuffer + cxt->inputIndex, 0, (cxt->numSamples - cxt->inputIndex) * sizeof (artsample_t));
 
 #ifdef ENABLE_EXTRAPOLATION
         if (cxt->flags & EXTRAPOLATE_ENDPOINTS)
@@ -764,7 +768,7 @@ static int resampleProcessChannelJob (void *ptr, void *sync_not_used)
         if (cxt->outputOffset + offset2 >= cxt->inputIndex - half_taps) {
             if (cxt->numInputFrames > 0) {
                 if (cxt->inputIndex == cxt->numSamples) {
-                    memmove (cxt->cbuffer, cxt->cbuffer + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (float));
+                    memmove (cxt->cbuffer, cxt->cbuffer + cxt->numSamples - cxt->numTaps, cxt->numTaps * sizeof (artsample_t));
                     cxt->outputOffset -= cxt->numSamples - cxt->numTaps;
                     cxt->inputIndex -= cxt->numSamples - cxt->numTaps;
                 }
@@ -980,9 +984,9 @@ static unsigned long gcd (unsigned long a, unsigned long b)
 // a double improves the quality somewhat at the possible expense of speed.
 
 #if 0   // Version 1 (canonical, very simple but slow and less accurate, not recommended)
-static double apply_filter (float *A, float *B, int num_taps)
+static double apply_filter (artsample_t *A, artsample_t *B, int num_taps)
 {
-    float sum = 0.0;
+    artsample_t sum = 0.0;
 
     do sum += *A++ * *B++;
     while (--num_taps);
@@ -991,13 +995,13 @@ static double apply_filter (float *A, float *B, int num_taps)
 }
 #endif
 
-#if 1   // Version 2 (outside-in order, more accurate)
-        // Works well with gcc and mingw
-        // try "-O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math"
-static double apply_filter (float *A, float *B, int num_taps)
+#ifndef _MSC_VER    // Version 2 (outside-in order, more accurate)
+                    // Works well with gcc and mingw (but MSVC works better with next one)
+                    // try "-O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math"
+static double apply_filter (artsample_t *A, artsample_t *B, int num_taps)
 {
     int i = num_taps - 1;
-    float sum = 0.0;
+    artsample_t sum = 0.0;
 
     do {
         sum += (A[0] * B[0]) + (A[i] * B[i]);
@@ -1008,12 +1012,12 @@ static double apply_filter (float *A, float *B, int num_taps)
 }
 #endif
 
-#if 0   // Version 3 (outside-in order, 2x unrolled loop)
-        // Works well with MSVC, but gcc has trouble vectorizing it
-static double apply_filter(float* A, float* B, int num_taps)
+#ifdef _MSC_VER     // Version 3 (outside-in order, 2x unrolled loop)
+                    // Works well with MSVC, but gcc has trouble vectorizing it
+static double apply_filter (artsample_t* A, artsample_t* B, int num_taps)
 {
     int i = num_taps - 1;
-    float sum = 0.0;
+    artsample_t sum = 0.0;
 
     do {
         sum += (A[0] * B[0]) + (A[i] * B[i]) + (A[1] * B[1]) + (A[i - 1] * B[i - 1]);
@@ -1027,7 +1031,7 @@ static double apply_filter(float* A, float* B, int num_taps)
 // For the "precise" version the order is not important, so just letting the compiler
 // do all the parallelization generally works the best
 
-static double apply_filter_precise (float *A, float *B, int num_taps)
+static double apply_filter_precise (artsample_t *A, artsample_t *B, int num_taps)
 {
     double sum = 0.0;
 
@@ -1037,7 +1041,7 @@ static double apply_filter_precise (float *A, float *B, int num_taps)
     return sum;
 }
 
-static void init_filter (Resample *cxt, float *filter, double fraction)
+static void init_filter (Resample *cxt, artsample_t *filter, double fraction)
 {
     double filter_sum = 0.0, scaler, error;
     const double a0 = 0.35875;
@@ -1082,7 +1086,7 @@ static void init_filter (Resample *cxt, float *filter, double fraction)
     }
 }
 
-static double subsample_no_interpolate (Resample *cxt, float *source, double offset)
+static double subsample_no_interpolate (Resample *cxt, artsample_t *source, double offset)
 {
     int fi = (int) floor ((offset - floor (offset)) * cxt->numFilters + 0.5);
 
@@ -1094,7 +1098,7 @@ static double subsample_no_interpolate (Resample *cxt, float *source, double off
     return cxt->apply_filter (cxt->filters [fi], source - cxt->numTaps / 2 + 1, cxt->numTaps);
 }
 
-static double subsample_interpolate (Resample *cxt, float *source, double offset)
+static double subsample_interpolate (Resample *cxt, artsample_t *source, double offset)
 {
     double frac = offset - floor (offset), sum;
     int fi = (int) floor (frac *= cxt->numFilters);
@@ -1105,7 +1109,7 @@ static double subsample_interpolate (Resample *cxt, float *source, double offset
     return sum + cxt->apply_filter (cxt->filters [fi + 1], source, cxt->numTaps) * frac;
 }
 
-static double subsample (Resample *cxt, float *source, double offset)
+static double subsample (Resample *cxt, artsample_t *source, double offset)
 {
     if (cxt->flags & SUBSAMPLE_INTERPOLATE)
         return subsample_interpolate (cxt, source, offset);

@@ -17,16 +17,16 @@
 //
 // Also see extrapolate_reverse() for a version with the data going backward.
 
-static double calc_lpc_coeffs (const float *values, int nvalues, float *coeffs, int maxloops);
+static double calc_lpc_coeffs (const artsample_t *values, int nvalues, float *coeffs, int maxloops);
 
-double extrapolate_forward (float *values, int nvalues, int num_to_extrapolate)
+double extrapolate_forward (artsample_t *values, int nvalues, int num_to_extrapolate)
 {
-    float *src = values + nvalues - NCOEFFS;
-    float *dst = values + nvalues;
+    artsample_t *src = values + nvalues - NCOEFFS;
+    artsample_t *dst = values + nvalues;
     float coeffs [NCOEFFS];
     double quality;
 
-    memset (values + nvalues, 0, num_to_extrapolate * sizeof (float));
+    memset (values + nvalues, 0, num_to_extrapolate * sizeof (artsample_t));
     quality = calc_lpc_coeffs (values, nvalues, coeffs, MAXLOOPS);
 
     for (int i = 0; i < num_to_extrapolate; ++i) {
@@ -46,9 +46,9 @@ double extrapolate_forward (float *values, int nvalues, int num_to_extrapolate)
 // first value PAST the actual samples to be extrapolated (backwards). In other words, it is valid
 // for the pointer to reference an invalid address because only prior values will be accessed.
 
-double extrapolate_reverse (float *values, int nvalues, int num_to_extrapolate)
+double extrapolate_reverse (artsample_t *values, int nvalues, int num_to_extrapolate)
 {
-    float *rbuffer = calloc (sizeof (float), nvalues + num_to_extrapolate);
+    artsample_t *rbuffer = calloc (sizeof (artsample_t), nvalues + num_to_extrapolate);
     double quality;
     int i;
 
@@ -82,7 +82,7 @@ double extrapolate_reverse (float *values, int nvalues, int num_to_extrapolate)
 static void lpc_to_parcor (const double *lpc, double *parcor, int ncoeffs);
 static void parcor_to_lpc (const double *parcor, double *lpc, int ncoeffs);
 
-static double calc_lpc_coeffs (const float *values, int nvalues, float *coeffs, int maxloops)
+static double calc_lpc_coeffs (const artsample_t *values, int nvalues, float *coeffs, int maxloops)
 {
     double values_rms = 0.0, deltas_rms = 0.0, filter_rms_error = 0.0, step = 3.0 / (1 << 4), quality_factor = 20.0;
     double *sums = malloc (sizeof (double) * (nvalues - NCOEFFS));
@@ -113,7 +113,7 @@ static double calc_lpc_coeffs (const float *values, int nvalues, float *coeffs, 
         int tcoeff;
 
         for (int k = 0; k < nevals; ++k) {
-            const float *kvalues = values + k;
+            const artsample_t *kvalues = values + k;
             double zero_sum = 0.0;
 
             for (int c = 0; c < NCOEFFS; ++c)
@@ -189,7 +189,7 @@ static double calc_lpc_coeffs (const float *values, int nvalues, float *coeffs, 
     filter_rms_error = 0.0;
 
     for (int k = 0; k < nevals; ++k) {
-        const float *kvalues = values + k;
+        const artsample_t *kvalues = values + k;
         double sum = 0.0;
 
         for (int c = 0; c < NCOEFFS; ++c)

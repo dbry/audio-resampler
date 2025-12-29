@@ -20,6 +20,12 @@
 #include "workers.h"
 #endif
 
+#if defined(PATH_WIDTH) && (PATH_WIDTH==64)
+typedef double artsample_t;
+#else
+typedef float artsample_t;
+#endif
+
 #define DITHER_HIGHPASS     0x1
 #define DITHER_FLAT         0x2
 #define DITHER_LOWPASS      0x4
@@ -35,20 +41,21 @@
 
 typedef struct {
     int numChannels, outputBits, outputBytes, dither_type, flags;
-    float outputGain, *feedback;
+    double outputGain;
+    artsample_t *feedback;
     uint32_t *tpdf_generators;
     Biquad *noise_shapers;
 
 #ifdef ENABLE_THREADS
     Workers *workers;
-    const float *input;
+    const artsample_t *input;
     int numInputFrames;
     unsigned char *output;
     int stride, clips;
 
     uint32_t tpdf_generator;
     Biquad noise_shaper;
-    float feedback_val;
+    artsample_t feedback_val;
 #endif
 } Decimate;
 
@@ -56,11 +63,11 @@ typedef struct {
 extern "C" {
 #endif
 
-void floatIntegersLE (unsigned char *input, float inputGain, int inputBits, int inputBytes, int inputStride, float *output, int numSamples);
+void floatIntegersLE (unsigned char *input, double inputGain, int inputBits, int inputBytes, int inputStride, artsample_t *output, int numSamples);
 
-Decimate *decimateInit (int numChannels, int outputBits, int outputBytes, float outputGain, int sampleRate, int flags);
-int decimateProcessLE (Decimate *cxt, const float *const *input, int numInputFrames, unsigned char *const *output);
-int decimateProcessInterleavedLE (Decimate *cxt, const float *input, int numInputFrames, unsigned char *output);
+Decimate *decimateInit (int numChannels, int outputBits, int outputBytes, double outputGain, int sampleRate, int flags);
+int decimateProcessLE (Decimate *cxt, const artsample_t *const *input, int numInputFrames, unsigned char *const *output);
+int decimateProcessInterleavedLE (Decimate *cxt, const artsample_t *input, int numInputFrames, unsigned char *output);
 void decimateFree (Decimate *cxt);
 
 #ifdef __cplusplus

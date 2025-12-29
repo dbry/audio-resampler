@@ -30,9 +30,9 @@
 
 #include "stretch.h"
 
-static void merge_blocks (float *output, float *input1, float *input2, int samples);
-static int find_period_fast (const Stretch *cxt, const float *samples);
-static int find_period (const Stretch *cxt, float *samples);
+static void merge_blocks (artsample_t *output, artsample_t *input1, artsample_t *input2, int samples);
+static int find_period_fast (const Stretch *cxt, const artsample_t *samples);
+static int find_period (const Stretch *cxt, artsample_t *samples);
 
 /*
  * Initialize a context of the time stretching code. The shortest and longest periods
@@ -158,10 +158,10 @@ int stretchGetOutputCapacity (Stretch *cxt, int max_num_samples, double max_rati
  * multiply the return value by the number channels!
  */
 
-int stretchProcess (Stretch *cxt, const float *samples, int num_samples, float *output, double ratio)
+int stretchProcess (Stretch *cxt, const artsample_t *samples, int num_samples, artsample_t *output, double ratio)
 {
     int out_samples = 0, next_samples = 0;
-    float *outbuf = output;
+    artsample_t *outbuf = output;
     double next_ratio = 1.0;
 
     /* if there's a cascaded instance after this one, try to do as much of the ratio here and the rest in "next" */
@@ -332,7 +332,7 @@ int stretchProcess (Stretch *cxt, const float *samples, int num_samples, float *
  * stretch_output_capacity().
  */
 
-int stretchFlush (Stretch *cxt, float *output)
+int stretchFlush (Stretch *cxt, artsample_t *output)
 {
     int samples_leftover = cxt->head - cxt->tail;
     int samples_flushed = 0;
@@ -388,10 +388,10 @@ void stretchFree (Stretch *cxt)
  * denominator need be completely recalculated.
  */
 
-static int find_period (const Stretch *cxt, float *samples)
+static int find_period (const Stretch *cxt, artsample_t *samples)
 {
-    float sum, factor, best_factor = 0;
-    float *calcbuff = samples;
+    artsample_t sum, factor, best_factor = 0;
+    artsample_t *calcbuff = samples;
     int period, best_period;
     int i, j;
 
@@ -422,9 +422,9 @@ static int find_period (const Stretch *cxt, float *samples)
     /* this loop actually cycles through all period lengths */
 
     while (1) {
-        float *comp = calcbuff + period * 2;
-        float *ref = calcbuff + period;
-        float diff = 0;
+        artsample_t *comp = calcbuff + period * 2;
+        artsample_t *ref = calcbuff + period;
+        artsample_t diff = 0;
 
         /* compute sum of absolute differences */
 
@@ -469,9 +469,9 @@ static int find_period (const Stretch *cxt, float *samples)
  * side of the peak are compared to calculate a more accurate center of the period.
  */
 
-static int find_period_fast (const Stretch *cxt, const float *samples)
+static int find_period_fast (const Stretch *cxt, const artsample_t *samples)
 {
-    float sum, best_factor = 0;
+    artsample_t sum, best_factor = 0;
     int period, best_period;
     int i, j;
 
@@ -499,9 +499,9 @@ static int find_period_fast (const Stretch *cxt, const float *samples)
     /* this loop actually cycles through all period lengths */
 
     while (1) {
-        float *comp = cxt->calcbuff + period * 2;
-        float *ref = cxt->calcbuff + period;
-        float diff = 0.0;
+        artsample_t *comp = cxt->calcbuff + period * 2;
+        artsample_t *ref = cxt->calcbuff + period;
+        artsample_t diff = 0.0;
 
         /* compute sum of absolute differences */
 
@@ -534,8 +534,8 @@ static int find_period_fast (const Stretch *cxt, const float *samples)
     }
 
     if (best_period * cxt->num_chans * 2 != cxt->shortest && best_period * cxt->num_chans * 2 != cxt->longest) {
-        float high_side_diff = cxt->results [best_period] - cxt->results [best_period+1];
-        float low_side_diff = cxt->results [best_period] - cxt->results [best_period-1];
+        artsample_t high_side_diff = cxt->results [best_period] - cxt->results [best_period+1];
+        artsample_t low_side_diff = cxt->results [best_period] - cxt->results [best_period-1];
 
         if (low_side_diff > high_side_diff * M_E)
             best_period = best_period * 2 + 1;
@@ -557,7 +557,7 @@ static int find_period_fast (const Stretch *cxt, const float *samples)
  * this way the resulting block blends with the previous and next blocks.
  */
 
-static void merge_blocks (float *output, float *input1, float *input2, int samples)
+static void merge_blocks (artsample_t *output, artsample_t *input1, artsample_t *input2, int samples)
 {
     int i;
 
