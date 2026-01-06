@@ -1003,8 +1003,9 @@ static double apply_filter (artsample_t *A, artsample_t *B, int num_taps)
 }
 #endif
 
-#ifndef _MSC_VER    // Version 2 (outside-in order, more accurate)
-                    // Works well with gcc and mingw (but MSVC works better with next one)
+#if !defined(_MSC_VER) || defined(__clang__)
+                    // Version 2 (outside-in order, more accurate)
+                    // Works well with gcc and clang but MSVC works better with the next one
                     // try "-O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math"
 static double apply_filter (artsample_t *A, artsample_t *B, int num_taps)
 {
@@ -1018,10 +1019,25 @@ static double apply_filter (artsample_t *A, artsample_t *B, int num_taps)
 
     return sum;
 }
+
+// For the "precise" version the order is not important, so just letting the compiler
+// do all the parallelization seems to work better with gcc and clang
+
+static double apply_filter_precise (artsample_t *A, artsample_t *B, int num_taps)
+{
+    double sum = 0.0;
+
+    do sum += (double) *A++ * *B++;
+    while (--num_taps);
+
+    return sum;
+}
+
 #endif
 
-#ifdef _MSC_VER     // Version 3 (outside-in order, 2x unrolled loop)
-                    // Works well with MSVC, but gcc has trouble vectorizing it
+#if defined(_MSC_VER) && !defined(__clang__)
+                    // Version 3 (outside-in order, 2x unrolled loop)
+                    // Works well with MSVC, but gcc & clang have trouble vectorizing it
 static double apply_filter (artsample_t* A, artsample_t* B, int num_taps)
 {
     int i = num_taps - 1;
@@ -1034,20 +1050,21 @@ static double apply_filter (artsample_t* A, artsample_t* B, int num_taps)
 
     return sum;
 }
-#endif
 
-// For the "precise" version the order is not important, so just letting the compiler
-// do all the parallelization generally works the best
-
-static double apply_filter_precise (artsample_t *A, artsample_t *B, int num_taps)
+static double apply_filter_precise (artsample_t* A, artsample_t* B, int num_taps)
 {
+    int i = num_taps - 1;
     double sum = 0.0;
 
-    do sum += (double) *A++ * *B++;
-    while (--num_taps);
+    do {
+        sum += ((double) A[0] * B[0]) + ((double) A[i] * B[i]) + ((double) A[1] * B[1]) + ((double) A[i - 1] * B[i - 1]);
+        A += 2; B += 2;
+    } while ((i -= 4) > 0);
 
     return sum;
 }
+
+#endif
 
 static void init_filter (Resample *cxt, artsample_t *filter, double fraction)
 {
