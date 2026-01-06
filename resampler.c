@@ -158,6 +158,14 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
                 cxt->filters [cxt->numFilters] [(j+1) % cxt->numTaps] = cxt->filters [0] [j];
     }
 
+    // The first and last filters should actually have just an odd number of taps,
+    // but Blackman-Harris doesn't go all the way to zero, so clear the outliers here.
+    // This almost eliminates the tiny discrepancies caused by different processing
+    // chunk sizes (those remaining come from math errors and rounding).
+
+    cxt->filters [0] [cxt->numTaps - 1] = 0.0;
+    cxt->filters [cxt->numFilters] [0] = 0.0;
+
     free (cxt->tempFilter); cxt->tempFilter = NULL;
     cxt->buffers = calloc (numChannels, sizeof (artsample_t*));
 
