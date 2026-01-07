@@ -1003,9 +1003,9 @@ static double apply_filter (artsample_t *A, artsample_t *B, int num_taps)
 }
 #endif
 
-#if !defined(_MSC_VER) || defined(__clang__)
+#if !defined(_MSC_VER) || defined(__clang__) || defined(__llvm__) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
                     // Version 2 (outside-in order, more accurate)
-                    // Works well with gcc and clang but MSVC works better with the next one
+                    // Works well with most compilers but MSVC works better with the next one
                     // try "-O3 -mavx2 -fno-signed-zeros -fno-trapping-math -fassociative-math"
 static double apply_filter (artsample_t *A, artsample_t *B, int num_taps)
 {
@@ -1033,11 +1033,9 @@ static double apply_filter_precise (artsample_t *A, artsample_t *B, int num_taps
     return sum;
 }
 
-#endif
-
-#if defined(_MSC_VER) && !defined(__clang__)
+#else
                     // Version 3 (outside-in order, 2x unrolled loop)
-                    // Works well with MSVC, but gcc & clang have trouble vectorizing it
+                    // Works well with MSVC, but others have trouble vectorizing it
 static double apply_filter (artsample_t* A, artsample_t* B, int num_taps)
 {
     int i = num_taps - 1;
