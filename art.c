@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////
 //                            **** ART ****                               //
 //                        Audio Resampling Tool                           //
-//                 Copyright (c) 2006-2025 David Bryant                   //
+//                 Copyright (c) 2006-2026 David Bryant                   //
 //                         All Rights Reserved                            //
 //      Distributed under the BSD Software License (see license.txt)      //
 ////////////////////////////////////////////////////////////////////////////
@@ -24,7 +24,7 @@
 
 static const char *sign_on = "\n"
 " ART  Audio Resampling Tool  %d-bit Version %.1f\n"
-" Copyright (c) 2006 - 2025 David Bryant.\n\n";
+" Copyright (c) 2006 - 2026 David Bryant.\n\n";
 
 static const char *usage =
 " Usage:     ART [-options] infile.wav outfile.wav\n\n"

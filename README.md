@@ -2,7 +2,7 @@
 
 Audio Resampling Engine & Command-Line Tool
 
-Copyright (c) 2025 David Bryant.
+Copyright (c) 2026 David Bryant.
 
 All Rights Reserved.
 
@@ -16,7 +16,8 @@ range of hardware (e.g., ESP32 to high-end ARM). It is also well suited for ASRC
 converter) applications because it allows the resample ratio to be modified continuously and provides a
 function to query the exact phase position of the resampler (required in the feedback loop of an ASRC).
 The latest version has optimizations to improve speed and accuracy when performing fixed-ratio conversions,
-and also supports multithreading for stereo and multichannel files.
+and also supports multithreading for stereo and multichannel files, and has options for 32-bit or 64-bit
+data paths.
 
 The package includes a command-line program (**ART**) to experiment with the resampler and serve as example
 code for the engine API. The resampling and filtering code works with only 32-bit float audio data, however
@@ -40,11 +41,14 @@ available for this tool.
 
 [Infinite Wave](https://infinitewave.ca/) had a very useful site comparing the audio performance of various sample
 rate converters but for political reasons is no longer available to viewers in the USA, so I unfortunately can no
-longer recommend it.
+longer recommend it. [Hydrogen Audio](https://src.hydrogenaudio.org/) has a new sample rate converter page that
+includes **ART**, both the stand-alone version from here and the
+[version incorporated into a foobar2000 component](https://www.foobar2000.org/components/view/foo_dsp_art_resampler).
 
 **ART** supports integer samples from 4-bits to 24-bits, as well as 32-bit floating-point samples. Any
 number of channels are supported. Normally the output bitdepth is set to the same as the input file, however
-this can be forced to one of the other supported bitdepths with the **-o** option.
+this can be forced to one of the other supported bitdepths with the **-o** option. The 64-bit version
+**ART64** also can import and export 64-bit float audio.
 
 Both the resampling and filter engines are endian-safe and the command-line program is endian-aware
 (although, of course, WAV files are always little-endian).
@@ -109,17 +113,26 @@ extrapolation. The presets were adjusted (most for higher quality) and a new opt
 convolution with extended precision math (doubles instead of floats) was added that can provide several
 dB of improved quality (although this could be significantly slower on some platforms.
 
+**Version 0.7** allows the data path width to be configured to 64-bits. This is perhaps not appropriate
+for embedded systems as it doubles the memory requirement of the resampler and can, depending on the
+platform, adversely affect performance. However, it improves the resampling quality somewhat and allows
+for 64-bit float input and output (in fact, it requires it). The included makefile builds both versions,
+and developers need only add -DPATH_WIDTH=64 to the compile configuration to enable this. There was also
+a minor change to the sinc filter generation code that fixed an issue where the number of samples passed
+in for each call affected the resampling results when doing fixed-ratio conversions, and this fix also
+improved the resampling quality slightly.
 
 ## Building
 
-A very simple Makefile is now provided for building the **ART** command-line tool and the **ARTEST** benchmarking
-tool. It is hardcoded for an optimized build on Intel PCs, but can easily be edited for other architectures.
+A very simple Makefile is provided for building both the standard 32-bit and the 64-bit versions of the
+**ART** command-line tool and the **ARTEST** benchmarking tool. It is hardcoded for an optimized build on
+Intel PCs using gcc, but can easily be edited for other architectures.
 
 The "help" display from the command-line app:
 
 ```
- ART  Audio Resampling Tool  Version 0.6
- Copyright (c) 2006 - 2025 David Bryant.
+ ART  Audio Resampling Tool  32-bit Version 0.7
+ Copyright (c) 2006 - 2026 David Bryant.
 
  Usage:     ART [-options] infile.wav outfile.wav
 
@@ -132,7 +145,7 @@ The "help" display from the command-line app:
                            (follow freq with 'k' for kHz)
            -f<num>     = number of sinc filters (1-1024)
            -t<num>     = number of sinc taps (4-1024, multiples of 4)
-           -o<bits>    = change output file bitdepth (4-24 or 32)
+           -o<bits>    = change output file bitdepth (4-24, or 32)
            -d<sel>     = override default dither (which is HP tpdf):
                            sel = 0 for no dither
                            sel = 1 for flat tpdf dither
