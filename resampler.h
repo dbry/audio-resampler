@@ -40,10 +40,10 @@ typedef struct {
     unsigned int input_used, output_generated;
 } ResampleResult;
 
-typedef struct {
+typedef struct resample {
     int numChannels, numSamples, numFilters, numTaps, inputIndex, flags;
     double *tempFilter, outputOffset, fixedRatio, lowpassRatio;
-    double (*apply_filter)(artsample_t *A, artsample_t *B, int num_taps);
+    double (*subsample)(struct resample *cxt, artsample_t *source, double offset);
     artsample_t **buffers, **filters;
 
 #ifdef ENABLE_THREADS

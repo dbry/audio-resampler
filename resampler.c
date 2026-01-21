@@ -15,9 +15,10 @@
 #endif
 
 static void init_filter (Resample *cxt, artsample_t *filter, double fraction);
-static double subsample (Resample *cxt, artsample_t *source, double offset);
-static double apply_filter_precise (artsample_t *A, artsample_t *B, int num_taps);
-static double apply_filter (artsample_t *A, artsample_t *B, int num_taps);
+static double subsample_no_interpolate_precise (Resample *cxt, artsample_t *source, double offset);
+static double subsample_interpolate_precise (Resample *cxt, artsample_t *source, double offset);
+static double subsample_no_interpolate (Resample *cxt, artsample_t *source, double offset);
+static double subsample_interpolate (Resample *cxt, artsample_t *source, double offset);
 static unsigned long gcd (unsigned long a, unsigned long b);
 
 // There are now two functions to initialize a resampler context. The legacy version is for
@@ -188,9 +189,11 @@ Resample *resampleInit (int numChannels, int numTaps, int numFilters, double low
     // extended math only makes sense if we have a 32-bit path
 
     if (sizeof (artsample_t) == 4 && (cxt->flags & EXTEND_CONVOLUTION_MATH))
-        cxt->apply_filter = apply_filter_precise;
+        cxt->subsample = (cxt->flags & SUBSAMPLE_INTERPOLATE) ?
+            subsample_interpolate_precise : subsample_no_interpolate_precise;
     else
-        cxt->apply_filter = apply_filter;
+        cxt->subsample = (cxt->flags & SUBSAMPLE_INTERPOLATE) ?
+            subsample_interpolate : subsample_no_interpolate;
 
     return cxt;
 }
@@ -513,7 +516,7 @@ ResampleResult resampleProcess (Resample *cxt, const artsample_t *const *input, 
             }
 #endif
             for (i = 0; i < cxt->numChannels; ++i)
-                output [i] [res.output_generated] = subsample (cxt, cxt->buffers [i], cxt->outputOffset + offset2);
+                output [i] [res.output_generated] = cxt->subsample (cxt, cxt->buffers [i], cxt->outputOffset + offset2);
 
             offset2 = ++res.output_generated / ratio;
             numOutputFrames--;
@@ -625,7 +628,7 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const artsample_t *inp
             }
 #endif
             for (i = 0; i < cxt->numChannels; ++i)
-                *output++ = subsample (cxt, cxt->buffers [i], cxt->outputOffset + offset2);
+                *output++ = cxt->subsample (cxt, cxt->buffers [i], cxt->outputOffset + offset2);
 
             offset2 = ++res.output_generated / ratio;
             numOutputFrames--;
@@ -800,7 +803,7 @@ static int resampleProcessChannelJob (void *ptr, void *sync_not_used)
                 cxt->flags &= ~EXTRAPOLATE_PREFILL;
             }
 #endif
-            *(cxt->output += cxt->stride) = subsample (cxt, cxt->cbuffer, cxt->outputOffset + offset2);
+            *(cxt->output += cxt->stride) = cxt->subsample (cxt, cxt->cbuffer, cxt->outputOffset + offset2);
             offset2 = ++(cxt->res.output_generated) / cxt->ratio;
             cxt->numOutputFrames--;
         }
@@ -1118,24 +1121,41 @@ static double subsample_no_interpolate (Resample *cxt, artsample_t *source, doub
     if (!(cxt->flags & INCLUDE_LOWPASS) && !(fi % cxt->numFilters))
         return source [fi / cxt->numFilters];
 
-    return cxt->apply_filter (cxt->filters [fi], source - cxt->numTaps / 2 + 1, cxt->numTaps);
+    return apply_filter (cxt->filters [fi], source - cxt->numTaps / 2 + 1, cxt->numTaps);
 }
 
 static double subsample_interpolate (Resample *cxt, artsample_t *source, double offset)
 {
-    double frac = offset - floor (offset), sum;
+    double frac = offset - floor (offset);
     int fi = (int) floor (frac *= cxt->numFilters);
 
+    frac -= fi;
     source += (int) floor (offset) - cxt->numTaps / 2 + 1;
-    sum = cxt->apply_filter (cxt->filters [fi], source, cxt->numTaps) * (1.0 - (frac -= fi));
 
-    return sum + cxt->apply_filter (cxt->filters [fi + 1], source, cxt->numTaps) * frac;
+    return (apply_filter (cxt->filters [fi], source, cxt->numTaps) * (1.0 - frac)) +
+           (apply_filter (cxt->filters [fi + 1], source, cxt->numTaps) * frac);
 }
 
-static double subsample (Resample *cxt, artsample_t *source, double offset)
+static double subsample_no_interpolate_precise (Resample *cxt, artsample_t *source, double offset)
 {
-    if (cxt->flags & SUBSAMPLE_INTERPOLATE)
-        return subsample_interpolate (cxt, source, offset);
-    else
-        return subsample_no_interpolate (cxt, source, offset);
+    int fi = (int) floor ((offset - floor (offset)) * cxt->numFilters + 0.5);
+
+    source += (int) floor (offset);
+
+    if (!(cxt->flags & INCLUDE_LOWPASS) && !(fi % cxt->numFilters))
+        return source [fi / cxt->numFilters];
+
+    return apply_filter_precise (cxt->filters [fi], source - cxt->numTaps / 2 + 1, cxt->numTaps);
+}
+
+static double subsample_interpolate_precise (Resample *cxt, artsample_t *source, double offset)
+{
+    double frac = offset - floor (offset);
+    int fi = (int) floor (frac *= cxt->numFilters);
+
+    frac -= fi;
+    source += (int) floor (offset) - cxt->numTaps / 2 + 1;
+
+    return (apply_filter_precise (cxt->filters [fi], source, cxt->numTaps) * (1.0 - frac)) +
+           (apply_filter_precise (cxt->filters [fi + 1], source, cxt->numTaps) * frac);
 }
