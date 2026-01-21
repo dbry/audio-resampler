@@ -555,7 +555,7 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const artsample_t *inp
             Resample *wcxt = worker_contexts + ch;
 
             *wcxt = *cxt;
-            wcxt->input = input + ch - cxt->numChannels;
+            if (input) wcxt->input = input + ch - cxt->numChannels;
             wcxt->numInputFrames = numInputFrames;
             wcxt->output = output + ch - cxt->numChannels;
             wcxt->numOutputFrames = numOutputFrames;
@@ -576,7 +576,7 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const artsample_t *inp
         return res;
     }
     else if (cxt->numChannels == 1) {
-        cxt->input = input - 1;
+        if (input) cxt->input = input - 1;
         cxt->numInputFrames = numInputFrames;
         cxt->output = output - 1;
         cxt->numOutputFrames = numOutputFrames;
