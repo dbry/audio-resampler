@@ -326,6 +326,11 @@ Resample *resampleFixedRatioInit (int numChannels, int numTaps, int maxFilters, 
         if (factor <= maxFilters) {
             flags &= ~SUBSAMPLE_INTERPOLATE;
             maxFilters = factor;
+
+            // if the number of filters is not a power of two, snap to the nearest filter after each buffer
+
+            if (maxFilters & (maxFilters - 1))
+                flags |= RESAMPLER_SNAP_OFFSET;
         }
     }
 
@@ -524,6 +529,11 @@ ResampleResult resampleProcess (Resample *cxt, const artsample_t *const *input, 
     }
 
     cxt->outputOffset += offset2;
+
+    if (cxt->flags & RESAMPLER_SNAP_OFFSET)
+        cxt->outputOffset = floor (cxt->outputOffset) +
+            floor ((cxt->outputOffset - floor (cxt->outputOffset)) * cxt->numFilters + 0.5) / cxt->numFilters;
+
     return res;
 #ifdef ENABLE_THREADS
     }
@@ -636,6 +646,11 @@ ResampleResult resampleProcessInterleaved (Resample *cxt, const artsample_t *inp
     }
 
     cxt->outputOffset += offset2;
+
+    if (cxt->flags & RESAMPLER_SNAP_OFFSET)
+        cxt->outputOffset = floor (cxt->outputOffset) +
+            floor ((cxt->outputOffset - floor (cxt->outputOffset)) * cxt->numFilters + 0.5) / cxt->numFilters;
+
     return res;
 #ifdef ENABLE_THREADS
     }
@@ -810,6 +825,11 @@ static int resampleProcessChannelJob (void *ptr, void *sync_not_used)
     }
 
     cxt->outputOffset += offset2;
+
+    if (cxt->flags & RESAMPLER_SNAP_OFFSET)
+        cxt->outputOffset = floor (cxt->outputOffset) +
+            floor ((cxt->outputOffset - floor (cxt->outputOffset)) * cxt->numFilters + 0.5) / cxt->numFilters;
+
     return 0;
 }
 

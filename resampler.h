@@ -35,6 +35,7 @@ typedef float artsample_t;
 #define EXTRAPOLATE_PREFILL     0x80    // internal use only, do not set
 #define EXTEND_CONVOLUTION_MATH 0x100
 #define RESAMPLER_FLUSHED       0x200   // internal use only, do not set
+#define RESAMPLER_SNAP_OFFSET   0x400   // internal use only, do not set
 
 typedef struct {
     unsigned int input_used, output_generated;
