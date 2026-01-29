@@ -25,7 +25,7 @@
 #include "biquad.h"
 
 // This program is used to benchmark and test the audio resampler library
-// in two major ways:
+// in three major ways:
 //
 // 1. Reverse resample and inverse paste for measuring resampling fidelity
 // 2. Testing of interleaved and non-interleaved versions, and decimation
@@ -56,6 +56,7 @@ static const char *usage =
 "           -f<num>     = number of sinc filters (1-1024, default 380)\n"
 "           -t<num>     = number of sinc taps (4-1024, default 380)\n"
 "           -o<bits>    = change output file bitdepth (4-24)\n"
+"           -z          = use Hann windowing instead of Blackman-Harris\n"
 #ifdef FIXED_RATIO
 "           -e          = calc exact filters / no interpolation\n"
 #endif
@@ -77,8 +78,7 @@ static const char *usage =
 #if !defined(PATH_WIDTH) || (PATH_WIDTH==32)
 "           -p          = precise, use doubles not floats for convolution\n"
 #endif
-"           -v          = test non-interleaved versions (if they exist)\n"
-"           -o<bits>    = change output file bitdepth (4-24 or 32)\n\n";
+"           -v          = test non-interleaved versions (if they exist)\n\n";
 
 typedef struct {
     uint64_t count, checksum;
@@ -189,6 +189,10 @@ int main (int argc, char **argv)
                         }
 
                         --*argv;
+                        break;
+
+                    case 'z':
+                        flags &= ~BLACKMAN_HARRIS;
                         break;
 
                     case 'i':
