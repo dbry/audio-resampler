@@ -126,8 +126,12 @@ int decimateProcessLE (Decimate *cxt, const artsample_t *const *input, int numIn
             wcxt->stride = 1;
             wcxt->clips = 0;
             wcxt->feedback_val = cxt->feedback [ch];
-            wcxt->tpdf_generator = cxt->tpdf_generators [ch];
-            memcpy (&wcxt->noise_shaper, cxt->noise_shapers + ch, sizeof (Biquad));
+
+            if (cxt->flags & DITHER_ENABLED)
+                wcxt->tpdf_generator = cxt->tpdf_generators [ch];
+
+            if (cxt->flags & SHAPING_ENABLED)
+                memcpy (&wcxt->noise_shaper, cxt->noise_shapers + ch, sizeof (Biquad));
 
             workersEnqueueJob (cxt->workers, decimateProcessSingleChanLE, wcxt,
                 ch < cxt->numChannels - 1 ? WaitForAvailableWorkerThread : DontUseWorkerThread);
@@ -218,9 +222,13 @@ int decimateProcessInterleavedLE (Decimate *cxt, const artsample_t *input, int n
             wcxt->output = output + (ch * cxt->outputBytes);
             wcxt->stride = cxt->numChannels;
             wcxt->clips = 0;
-            wcxt->tpdf_generator = cxt->tpdf_generators [ch];
             wcxt->feedback_val = cxt->feedback [ch];
-            memcpy (&wcxt->noise_shaper, cxt->noise_shapers + ch, sizeof (Biquad));
+
+            if (cxt->flags & DITHER_ENABLED)
+                wcxt->tpdf_generator = cxt->tpdf_generators [ch];
+
+            if (cxt->flags & SHAPING_ENABLED)
+                memcpy (&wcxt->noise_shaper, cxt->noise_shapers + ch, sizeof (Biquad));
 
             workersEnqueueJob (cxt->workers, decimateProcessSingleChanLE, wcxt,
                 ch < cxt->numChannels - 1 ? WaitForAvailableWorkerThread : DontUseWorkerThread);
@@ -231,9 +239,13 @@ int decimateProcessInterleavedLE (Decimate *cxt, const artsample_t *input, int n
         for (ch = 0; ch < cxt->numChannels; ++ch) {
             Decimate *wcxt = worker_contexts + ch;
 
-            cxt->tpdf_generators [ch] = wcxt->tpdf_generator;
+            if (cxt->flags & DITHER_ENABLED)
+                cxt->tpdf_generators [ch] = wcxt->tpdf_generator;
+
+            if (cxt->flags & SHAPING_ENABLED)
+                memcpy (cxt->noise_shapers + ch, &wcxt->noise_shaper, sizeof (Biquad));
+
             cxt->feedback [ch] = wcxt->feedback_val;
-            memcpy (cxt->noise_shapers + ch, &wcxt->noise_shaper, sizeof (Biquad));
             clipped_samples += wcxt->clips;
         }
 
